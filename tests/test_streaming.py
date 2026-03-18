@@ -1,17 +1,11 @@
 """Tests for the --stream flag and provider-based streaming in LLMDispatcher."""
 
-import sys
 import time
 from unittest import mock
 
 import pytest
 
-# Import only the classes we can test without audio/whisper dependencies
-sys.modules["numpy"] = mock.MagicMock()
-sys.modules["sounddevice"] = mock.MagicMock()
-sys.modules["faster_whisper"] = mock.MagicMock()
-
-from live_scribe import ClaudeDispatcher, LLMDispatcher, TranscriptionBuffer  # noqa: E402
+from live_scribe import ClaudeDispatcher, LLMDispatcher, TranscriptionBuffer, build_parser
 
 
 # ── Helpers ──────────────────────────────────────────────────────────
@@ -115,19 +109,13 @@ class TestStreamArgParsing:
 
     def test_stream_flag_default_off(self):
         """--stream should default to False."""
-        import argparse
-
-        parser = argparse.ArgumentParser()
-        parser.add_argument("--stream", action="store_true")
+        parser = build_parser()
         args = parser.parse_args([])
         assert args.stream is False
 
     def test_stream_flag_enabled(self):
         """--stream should set stream=True."""
-        import argparse
-
-        parser = argparse.ArgumentParser()
-        parser.add_argument("--stream", action="store_true")
+        parser = build_parser()
         args = parser.parse_args(["--stream"])
         assert args.stream is True
 

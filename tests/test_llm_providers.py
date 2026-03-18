@@ -1,13 +1,9 @@
 """Tests for the multi-LLM provider system."""
 
-import io
 import json
-import sys
-import unittest
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock, patch
 
-# Ensure project root is importable
-sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent.parent))
+import pytest
 
 from llm_providers import (
     PROVIDERS,
@@ -21,12 +17,13 @@ from llm_providers import (
     OpenAIAPIProvider,
     create_provider,
 )
+from live_scribe import build_parser
 
 
-# ── Factory / registry tests ──────────────────────────────────────────────
+# -- Factory / registry tests --
 
 
-class TestProviderFactory(unittest.TestCase):
+class TestProviderFactory:
     """Tests for create_provider and the PROVIDERS registry."""
 
     def test_all_provider_names_registered(self):
@@ -40,53 +37,51 @@ class TestProviderFactory(unittest.TestCase):
             "ollama",
             "litellm",
         }
-        self.assertEqual(set(PROVIDERS.keys()), expected)
+        assert set(PROVIDERS.keys()) == expected
 
     def test_unknown_provider_raises(self):
-        with self.assertRaises(ValueError) as ctx:
+        with pytest.raises(ValueError, match="Unknown provider"):
             create_provider("does-not-exist")
-        self.assertIn("Unknown provider", str(ctx.exception))
-        self.assertIn("does-not-exist", str(ctx.exception))
 
     def test_factory_creates_claude_cli(self):
         provider = create_provider("claude-cli")
-        self.assertIsInstance(provider, ClaudeCLIProvider)
+        assert isinstance(provider, ClaudeCLIProvider)
 
     def test_factory_creates_ollama(self):
         provider = create_provider("ollama", model="mistral")
-        self.assertIsInstance(provider, OllamaProvider)
-        self.assertEqual(provider.model, "mistral")
+        assert isinstance(provider, OllamaProvider)
+        assert provider.model == "mistral"
 
     def test_factory_creates_codex_cli(self):
         provider = create_provider("codex-cli")
-        self.assertIsInstance(provider, CodexCLIProvider)
+        assert isinstance(provider, CodexCLIProvider)
 
     def test_factory_creates_gemini_cli(self):
         provider = create_provider("gemini-cli")
-        self.assertIsInstance(provider, GeminiCLIProvider)
+        assert isinstance(provider, GeminiCLIProvider)
 
 
-# ── ClaudeCLIProvider tests ───────────────────────────────────────────────
+# -- ClaudeCLIProvider tests --
 
 
-class TestClaudeCLIProvider(unittest.TestCase):
+class TestClaudeCLIProvider:
     def test_name_without_model(self):
         p = ClaudeCLIProvider()
-        self.assertEqual(p.name, "Claude CLI")
+        assert p.name == "Claude CLI"
 
     def test_name_with_model(self):
         p = ClaudeCLIProvider(model="opus")
-        self.assertEqual(p.name, "Claude CLI (opus)")
+        assert p.name == "Claude CLI (opus)"
 
     @patch("llm_providers.subprocess.run")
     def test_send_success(self, mock_run):
         mock_run.return_value = MagicMock(returncode=0, stdout="  Hello world  ")
         p = ClaudeCLIProvider()
         result = p.send("hi")
-        self.assertEqual(result, "Hello world")
+        assert result == "Hello world"
         mock_run.assert_called_once()
         cmd = mock_run.call_args[0][0]
-        self.assertEqual(cmd, ["claude", "-p", "hi"])
+        assert cmd == ["claude", "-p", "hi"]
 
     @patch("llm_providers.subprocess.run")
     def test_send_with_model(self, mock_run):
@@ -94,82 +89,82 @@ class TestClaudeCLIProvider(unittest.TestCase):
         p = ClaudeCLIProvider(model="sonnet")
         p.send("hi")
         cmd = mock_run.call_args[0][0]
-        self.assertEqual(cmd, ["claude", "-p", "hi", "--model", "sonnet"])
+        assert cmd == ["claude", "-p", "hi", "--model", "sonnet"]
 
     @patch("llm_providers.subprocess.run")
     def test_send_failure_returns_none(self, mock_run):
         mock_run.return_value = MagicMock(returncode=1, stderr="error msg")
         p = ClaudeCLIProvider()
         result = p.send("hi")
-        self.assertIsNone(result)
+        assert result is None
 
     @patch("llm_providers.subprocess.run", side_effect=FileNotFoundError)
     def test_send_missing_binary(self, mock_run):
         p = ClaudeCLIProvider()
         result = p.send("hi")
-        self.assertIsNone(result)
+        assert result is None
 
-    @patch("llm_providers.subprocess.run", side_effect=__import__("subprocess").TimeoutExpired(cmd="claude", timeout=10))
+    @patch(
+        "llm_providers.subprocess.run",
+        side_effect=__import__("subprocess").TimeoutExpired(cmd="claude", timeout=10),
+    )
     def test_send_timeout(self, mock_run):
         p = ClaudeCLIProvider(timeout=10)
         result = p.send("hi")
-        self.assertIsNone(result)
+        assert result is None
 
 
-# ── CodexCLIProvider tests ────────────────────────────────────────────────
+# -- CodexCLIProvider tests --
 
 
-class TestCodexCLIProvider(unittest.TestCase):
+class TestCodexCLIProvider:
     @patch("llm_providers.subprocess.run")
     def test_send_success(self, mock_run):
         mock_run.return_value = MagicMock(returncode=0, stdout="codex output")
         p = CodexCLIProvider()
         result = p.send("hi")
-        self.assertEqual(result, "codex output")
+        assert result == "codex output"
         cmd = mock_run.call_args[0][0]
-        self.assertEqual(cmd, ["codex", "--quiet", "hi"])
+        assert cmd == ["codex", "--quiet", "hi"]
 
     def test_name(self):
         p = CodexCLIProvider(model="o3")
-        self.assertEqual(p.name, "Codex CLI (o3)")
+        assert p.name == "Codex CLI (o3)"
 
 
-# ── GeminiCLIProvider tests ───────────────────────────────────────────────
+# -- GeminiCLIProvider tests --
 
 
-class TestGeminiCLIProvider(unittest.TestCase):
+class TestGeminiCLIProvider:
     @patch("llm_providers.subprocess.run")
     def test_send_success(self, mock_run):
         mock_run.return_value = MagicMock(returncode=0, stdout="gemini output")
         p = GeminiCLIProvider()
         result = p.send("hi")
-        self.assertEqual(result, "gemini output")
+        assert result == "gemini output"
         cmd = mock_run.call_args[0][0]
-        self.assertEqual(cmd, ["gemini", "-p", "hi"])
+        assert cmd == ["gemini", "-p", "hi"]
 
     def test_name(self):
         p = GeminiCLIProvider(model="2.5-pro")
-        self.assertEqual(p.name, "Gemini CLI (2.5-pro)")
+        assert p.name == "Gemini CLI (2.5-pro)"
 
 
-# ── AnthropicAPIProvider tests ────────────────────────────────────────────
+# -- AnthropicAPIProvider tests --
 
 
-class TestAnthropicAPIProvider(unittest.TestCase):
+class TestAnthropicAPIProvider:
     def test_missing_sdk(self):
         with patch.dict("sys.modules", {"anthropic": None}):
-            with self.assertRaises(ImportError) as ctx:
+            with pytest.raises(ImportError, match="pip install anthropic"):
                 AnthropicAPIProvider()
-            self.assertIn("pip install anthropic", str(ctx.exception))
 
     @patch.dict("os.environ", {"ANTHROPIC_API_KEY": ""}, clear=False)
     def test_missing_api_key(self):
-        # Provide a real-ish module mock so the import succeeds
         mock_mod = MagicMock()
         with patch.dict("sys.modules", {"anthropic": mock_mod}):
-            with self.assertRaises(ValueError) as ctx:
+            with pytest.raises(ValueError, match="ANTHROPIC_API_KEY"):
                 AnthropicAPIProvider()
-            self.assertIn("ANTHROPIC_API_KEY", str(ctx.exception))
 
     @patch.dict("os.environ", {"ANTHROPIC_API_KEY": "sk-test-key"}, clear=False)
     def test_send_success(self):
@@ -185,7 +180,7 @@ class TestAnthropicAPIProvider(unittest.TestCase):
             p = AnthropicAPIProvider(model="claude-sonnet-4-20250514")
             result = p.send("hi")
 
-        self.assertEqual(result, "Hello from Claude")
+        assert result == "Hello from Claude"
         mock_client.messages.create.assert_called_once()
 
     @patch.dict("os.environ", {"ANTHROPIC_API_KEY": "sk-test-key"}, clear=False)
@@ -193,26 +188,24 @@ class TestAnthropicAPIProvider(unittest.TestCase):
         mock_mod = MagicMock()
         with patch.dict("sys.modules", {"anthropic": mock_mod}):
             p = AnthropicAPIProvider(model="claude-opus-4-20250514")
-        self.assertEqual(p.name, "Anthropic API (claude-opus-4-20250514)")
+        assert p.name == "Anthropic API (claude-opus-4-20250514)"
 
 
-# ── OpenAIAPIProvider tests ──────────────────────────────────────────────
+# -- OpenAIAPIProvider tests --
 
 
-class TestOpenAIAPIProvider(unittest.TestCase):
+class TestOpenAIAPIProvider:
     def test_missing_sdk(self):
         with patch.dict("sys.modules", {"openai": None}):
-            with self.assertRaises(ImportError) as ctx:
+            with pytest.raises(ImportError, match="pip install openai"):
                 OpenAIAPIProvider()
-            self.assertIn("pip install openai", str(ctx.exception))
 
     @patch.dict("os.environ", {"OPENAI_API_KEY": ""}, clear=False)
     def test_missing_api_key(self):
         mock_mod = MagicMock()
         with patch.dict("sys.modules", {"openai": mock_mod}):
-            with self.assertRaises(ValueError) as ctx:
+            with pytest.raises(ValueError, match="OPENAI_API_KEY"):
                 OpenAIAPIProvider()
-            self.assertIn("OPENAI_API_KEY", str(ctx.exception))
 
     @patch.dict("os.environ", {"OPENAI_API_KEY": "sk-test"}, clear=False)
     def test_send_success(self):
@@ -229,25 +222,24 @@ class TestOpenAIAPIProvider(unittest.TestCase):
             p = OpenAIAPIProvider(model="gpt-4o")
             result = p.send("hi")
 
-        self.assertEqual(result, "Hello from OpenAI")
+        assert result == "Hello from OpenAI"
 
     @patch.dict("os.environ", {"OPENAI_API_KEY": "sk-test"}, clear=False)
     def test_name(self):
         mock_mod = MagicMock()
         with patch.dict("sys.modules", {"openai": mock_mod}):
             p = OpenAIAPIProvider()
-        self.assertEqual(p.name, "OpenAI API (gpt-4o)")
+        assert p.name == "OpenAI API (gpt-4o)"
 
 
-# ── GeminiAPIProvider tests ──────────────────────────────────────────────
+# -- GeminiAPIProvider tests --
 
 
-class TestGeminiAPIProvider(unittest.TestCase):
+class TestGeminiAPIProvider:
     def test_missing_sdk(self):
         with patch.dict("sys.modules", {"google": None, "google.generativeai": None}):
-            with self.assertRaises(ImportError) as ctx:
+            with pytest.raises(ImportError, match="pip install google-generativeai"):
                 GeminiAPIProvider()
-            self.assertIn("pip install google-generativeai", str(ctx.exception))
 
     @patch.dict("os.environ", {"GEMINI_API_KEY": ""}, clear=False)
     def test_missing_api_key(self):
@@ -257,20 +249,18 @@ class TestGeminiAPIProvider(unittest.TestCase):
             "google": mock_google,
             "google.generativeai": mock_genai,
         }):
-            with self.assertRaises(ValueError) as ctx:
+            with pytest.raises(ValueError, match="GEMINI_API_KEY"):
                 GeminiAPIProvider()
-            self.assertIn("GEMINI_API_KEY", str(ctx.exception))
 
 
-# ── LiteLLMProvider tests ────────────────────────────────────────────────
+# -- LiteLLMProvider tests --
 
 
-class TestLiteLLMProvider(unittest.TestCase):
+class TestLiteLLMProvider:
     def test_missing_sdk(self):
         with patch.dict("sys.modules", {"litellm": None}):
-            with self.assertRaises(ImportError) as ctx:
+            with pytest.raises(ImportError, match="pip install litellm"):
                 LiteLLMProvider()
-            self.assertIn("pip install litellm", str(ctx.exception))
 
     def test_send_success(self):
         mock_mod = MagicMock()
@@ -283,26 +273,26 @@ class TestLiteLLMProvider(unittest.TestCase):
             p = LiteLLMProvider(model="gpt-4o")
             result = p.send("hi")
 
-        self.assertEqual(result, "Hello from LiteLLM")
+        assert result == "Hello from LiteLLM"
 
     def test_name(self):
         mock_mod = MagicMock()
         with patch.dict("sys.modules", {"litellm": mock_mod}):
             p = LiteLLMProvider(model="claude-3-opus")
-        self.assertEqual(p.name, "LiteLLM (claude-3-opus)")
+        assert p.name == "LiteLLM (claude-3-opus)"
 
 
-# ── OllamaProvider tests ─────────────────────────────────────────────────
+# -- OllamaProvider tests --
 
 
-class TestOllamaProvider(unittest.TestCase):
+class TestOllamaProvider:
     def test_name(self):
         p = OllamaProvider(model="codellama")
-        self.assertEqual(p.name, "Ollama (codellama)")
+        assert p.name == "Ollama (codellama)"
 
     def test_default_model(self):
         p = OllamaProvider()
-        self.assertEqual(p.model, "llama3")
+        assert p.model == "llama3"
 
     @patch("llm_providers.urllib.request.urlopen")
     def test_send_success(self, mock_urlopen):
@@ -316,13 +306,13 @@ class TestOllamaProvider(unittest.TestCase):
         p = OllamaProvider(model="llama3")
         result = p.send("hi")
 
-        self.assertEqual(result, "Hello from Ollama")
+        assert result == "Hello from Ollama"
         mock_urlopen.assert_called_once()
         req = mock_urlopen.call_args[0][0]
-        self.assertIn("/api/generate", req.full_url)
+        assert "/api/generate" in req.full_url
         sent_data = json.loads(req.data.decode())
-        self.assertEqual(sent_data["model"], "llama3")
-        self.assertFalse(sent_data["stream"])
+        assert sent_data["model"] == "llama3"
+        assert sent_data["stream"] is False
 
     @patch("llm_providers.urllib.request.urlopen")
     def test_send_streaming(self, mock_urlopen):
@@ -340,60 +330,55 @@ class TestOllamaProvider(unittest.TestCase):
         p = OllamaProvider(model="llama3")
         chunks = list(p.send_streaming("hi"))
 
-        self.assertEqual(chunks, ["Hello", " world"])
+        assert chunks == ["Hello", " world"]
 
-    @patch("llm_providers.urllib.request.urlopen", side_effect=__import__("urllib.error", fromlist=["URLError"]).URLError("Connection refused"))
+    @patch(
+        "llm_providers.urllib.request.urlopen",
+        side_effect=__import__("urllib.error", fromlist=["URLError"]).URLError("Connection refused"),
+    )
     def test_send_connection_error(self, mock_urlopen):
         p = OllamaProvider()
         result = p.send("hi")
-        self.assertIsNone(result)
+        assert result is None
 
 
-# ── CLI argument tests ───────────────────────────────────────────────────
+# -- CLI argument tests --
 
 
-class TestCLIArgs(unittest.TestCase):
+class TestCLIArgs:
     """Test --llm, --llm-model, and --claude-model backward compat in arg parsing."""
 
     def _parse(self, *cli_args):
-        """Build the arg parser from main() and parse given args."""
-        import argparse
-        parser = argparse.ArgumentParser()
-        parser.add_argument("--llm", default="claude-cli", choices=list(PROVIDERS.keys()))
-        parser.add_argument("--llm-model", default=None)
-        parser.add_argument("--claude-model", default=None)
+        """Build the arg parser via build_parser() and parse given args."""
+        parser = build_parser()
         return parser.parse_args(list(cli_args))
 
     def test_default_llm(self):
         args = self._parse()
-        self.assertEqual(args.llm, "claude-cli")
-        self.assertIsNone(args.llm_model)
+        assert args.llm == "claude-cli"
+        assert args.llm_model is None
 
     def test_llm_openai(self):
         args = self._parse("--llm", "openai", "--llm-model", "gpt-4o")
-        self.assertEqual(args.llm, "openai")
-        self.assertEqual(args.llm_model, "gpt-4o")
+        assert args.llm == "openai"
+        assert args.llm_model == "gpt-4o"
 
     def test_llm_ollama(self):
         args = self._parse("--llm", "ollama", "--llm-model", "mistral")
-        self.assertEqual(args.llm, "ollama")
-        self.assertEqual(args.llm_model, "mistral")
+        assert args.llm == "ollama"
+        assert args.llm_model == "mistral"
 
     def test_claude_model_backward_compat(self):
         args = self._parse("--claude-model", "opus")
-        self.assertEqual(args.claude_model, "opus")
+        assert args.claude_model == "opus"
         # In main(), claude_model falls back to llm_model when llm_model is None
-        self.assertIsNone(args.llm_model)
+        assert args.llm_model is None
 
     def test_invalid_llm_rejected(self):
-        with self.assertRaises(SystemExit):
+        with pytest.raises(SystemExit):
             self._parse("--llm", "not-a-provider")
 
     def test_all_provider_choices_accepted(self):
         for name in PROVIDERS:
             args = self._parse("--llm", name)
-            self.assertEqual(args.llm, name)
-
-
-if __name__ == "__main__":
-    unittest.main()
+            assert args.llm == name

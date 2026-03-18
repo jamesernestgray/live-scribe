@@ -501,7 +501,8 @@ def save_transcript(segments: list[dict], path: Path):
     print(f"  📄 Transcript saved to {path}")
 
 
-def main():
+def build_parser() -> argparse.ArgumentParser:
+    """Build and return the CLI argument parser for live-scribe."""
     parser = argparse.ArgumentParser(
         description="Live audio transcription with periodic LLM analysis.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -637,7 +638,11 @@ examples:
         "--port", type=int, default=8765,
         help="Port for the web UI server (default: 8765)",
     )
+    return parser
 
+
+def main():
+    parser = build_parser()
     args = parser.parse_args()
 
     # Validate --audio-file path

@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
-from live_scribe import ClaudeDispatcher, TranscriptionBuffer
+from live_scribe import ClaudeDispatcher, TranscriptionBuffer, build_parser
 
 
 def _make_segment(text: str, offset: float = 0.0, speaker: str | None = None) -> dict:
@@ -304,32 +304,18 @@ class TestDispatchFlow:
 class TestArgumentParsing:
     def test_conversation_flag_default_off(self):
         """--conversation should default to False."""
-        import argparse
-        from live_scribe import main
-
-        # Parse empty args (will fail at AudioTranscriber, but we just need args)
-        parser = argparse.ArgumentParser()
-        parser.add_argument("--conversation", action="store_true")
-        parser.add_argument("--conversation-limit", type=int, default=0)
+        parser = build_parser()
         args = parser.parse_args([])
         assert args.conversation is False
         assert args.conversation_limit == 0
 
     def test_conversation_flag_on(self):
-        import argparse
-
-        parser = argparse.ArgumentParser()
-        parser.add_argument("--conversation", action="store_true")
-        parser.add_argument("--conversation-limit", type=int, default=0)
+        parser = build_parser()
         args = parser.parse_args(["--conversation"])
         assert args.conversation is True
 
     def test_conversation_limit_value(self):
-        import argparse
-
-        parser = argparse.ArgumentParser()
-        parser.add_argument("--conversation", action="store_true")
-        parser.add_argument("--conversation-limit", type=int, default=0)
+        parser = build_parser()
         args = parser.parse_args(["--conversation", "--conversation-limit", "10"])
         assert args.conversation is True
         assert args.conversation_limit == 10
