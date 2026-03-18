@@ -785,7 +785,8 @@ def save_transcript(segments: list[dict], path: Path, fmt: str = "txt",
     print(f"  📄 Transcript saved to {path} (format: {fmt})")
 
 
-def main():
+def build_parser() -> argparse.ArgumentParser:
+    """Build and return the CLI argument parser for live-scribe."""
     parser = argparse.ArgumentParser(
         description="Live audio transcription with periodic LLM analysis.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -946,7 +947,11 @@ examples:
         "--host", default="127.0.0.1",
         help="Host for the web UI server (default: 127.0.0.1)",
     )
+    return parser
 
+
+def main():
+    parser = build_parser()
     args = parser.parse_args()
 
     # ── Preset resolution ──

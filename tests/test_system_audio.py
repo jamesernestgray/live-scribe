@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 import pytest
 
-from live_scribe import find_system_audio_device, get_system_audio_install_instructions
+from live_scribe import find_system_audio_device, get_system_audio_install_instructions, build_parser
 
 
 # ---------------------------------------------------------------------------
@@ -188,12 +188,8 @@ class TestArgParsing:
     """Test --system-audio flag parsing and interaction with --input-device."""
 
     def _parse(self, *cli_args):
-        """Parse CLI args through the real argparse setup (without running main)."""
-        import argparse
-        # Replicate the parser from main() to test argument interactions
-        parser = argparse.ArgumentParser()
-        parser.add_argument("--system-audio", action="store_true")
-        parser.add_argument("--input-device", type=int, default=None)
+        """Parse CLI args through the real build_parser()."""
+        parser = build_parser()
         return parser.parse_args(list(cli_args))
 
     def test_system_audio_flag_default_false(self):

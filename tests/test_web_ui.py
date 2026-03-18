@@ -6,31 +6,13 @@ static file serving, WebSocket message handling, and status responses.
 """
 
 import json
-import sys
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
 
-# Ensure the project root is on sys.path
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-# We need to mock heavy audio/ML dependencies before importing web_server,
-# since live_scribe imports sounddevice, numpy, faster_whisper at module level.
-
-# Create mock modules for audio/ML deps
-_mock_sd = MagicMock()
-_mock_whisper = MagicMock()
-
-sys.modules.setdefault("sounddevice", _mock_sd)
-sys.modules.setdefault("faster_whisper", _mock_whisper)
-
-# Mock WhisperModel so AudioTranscriber.__init__ won't actually load a model
-_mock_whisper.WhisperModel = MagicMock()
-
-import web_server  # noqa: E402
-from live_scribe import TranscriptionBuffer  # noqa: E402
+import web_server
+from live_scribe import TranscriptionBuffer
 
 
 @pytest.fixture(autouse=True)
@@ -260,16 +242,22 @@ class TestWebSocket:
     def test_ws_send_stop_when_not_recording(self, client):
         with client.websocket_connect("/ws") as ws:
             # Read initial status
-            ws.receive_json()
-            # Send stop
+            status = ws.receive_json()
+            assert status["type"] == "status"
+            assert status["recording"] is False
+            # Send stop (should not crash even when not recording)
             ws.send_json({"type": "stop"})
-            # Should get status back (from api_stop error path, but no crash)
+            # Connection should remain open -- send a ping-like message
+            ws.send_json({"type": "unknown"})
 
     def test_ws_invalid_json_ignored(self, client):
         with client.websocket_connect("/ws") as ws:
             ws.receive_json()  # initial status
             ws.send_text("not valid json")
-            # Should not crash -- connection stays open
+            # Connection should stay open -- verify by sending a valid message after
+            ws.send_json({"type": "unknown"})
+            # If we got here without exception, the connection is still open
+            assert True
 
 
 # ---------- WebSocket message parsing ----------

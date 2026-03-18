@@ -1,6 +1,5 @@
 """Tests for core enhancement features: language, streaming write, audio file, session log."""
 
-import argparse
 import os
 import re
 import tempfile
@@ -11,14 +10,10 @@ from unittest import mock
 
 import pytest
 
-# Add project root to path so we can import live_scribe
-import sys
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
 from live_scribe import (
     ClaudeDispatcher,
     TranscriptionBuffer,
+    build_parser,
 )
 
 
@@ -29,9 +24,8 @@ class TestLanguageArgument:
     """Test --language / -l flag argument parsing."""
 
     def _parse(self, args_list):
-        """Parse args using the same argparse setup as main()."""
-        parser = argparse.ArgumentParser()
-        parser.add_argument("--language", "-l", default=None)
+        """Parse args using the real build_parser() from live_scribe."""
+        parser = build_parser()
         return parser.parse_args(args_list)
 
     def test_language_default_is_none(self):
@@ -156,9 +150,7 @@ class TestAudioFileArgument:
     """Test --audio-file argument parsing and validation."""
 
     def _parse(self, args_list):
-        parser = argparse.ArgumentParser()
-        parser.add_argument("--audio-file", default=None)
-        parser.add_argument("--manual", action="store_true")
+        parser = build_parser()
         return parser.parse_args(args_list)
 
     def test_audio_file_default_is_none(self):
@@ -168,20 +160,6 @@ class TestAudioFileArgument:
     def test_audio_file_accepts_path(self):
         args = self._parse(["--audio-file", "/tmp/test.wav"])
         assert args.audio_file == "/tmp/test.wav"
-
-    def test_audio_file_nonexistent_path_detected(self):
-        """Verify that a nonexistent file path can be detected."""
-        path = "/tmp/definitely_not_a_real_file_12345.wav"
-        assert not Path(path).is_file()
-
-    def test_audio_file_existing_path_detected(self):
-        """Verify that an existing file path is accepted."""
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
-            path = f.name
-        try:
-            assert Path(path).is_file()
-        finally:
-            os.unlink(path)
 
     def test_audio_file_with_manual_is_valid(self):
         """--audio-file + --manual should be parseable (no conflict)."""
