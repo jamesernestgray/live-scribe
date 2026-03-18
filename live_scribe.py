@@ -405,11 +405,32 @@ examples:
         "--input-device", type=int, default=None,
         help="Audio input device index (see --list-devices)",
     )
+    parser.add_argument(
+        "--web", action="store_true",
+        help="Launch the web UI instead of the terminal interface",
+    )
+    parser.add_argument(
+        "--port", type=int, default=8765,
+        help="Port for the web UI server (default: 8765)",
+    )
 
     args = parser.parse_args()
 
     if args.list_devices:
         print(sd.query_devices())
+        return
+
+    if args.web:
+        from web_server import start_web_server
+        start_web_server(
+            port=args.port,
+            model=args.model,
+            prompt=args.prompt,
+            interval=args.interval,
+            context=args.context,
+            context_limit=args.context_limit,
+            claude_model=args.claude_model,
+        )
         return
 
     if args.input_device is not None:
