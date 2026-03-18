@@ -78,56 +78,74 @@ class TestClaudeCLIProvider(unittest.TestCase):
         p = ClaudeCLIProvider(model="opus")
         self.assertEqual(p.name, "Claude CLI (opus)")
 
-    @patch("llm_providers.subprocess.run")
-    def test_send_success(self, mock_run):
-        mock_run.return_value = MagicMock(returncode=0, stdout="  Hello world  ")
+    @patch("llm_providers.subprocess.Popen")
+    def test_send_success(self, mock_popen):
+        mock_proc = MagicMock()
+        mock_proc.communicate.return_value = ("  Hello world  ", "")
+        mock_proc.returncode = 0
+        mock_popen.return_value = mock_proc
         p = ClaudeCLIProvider()
         result = p.send("hi")
         self.assertEqual(result, "Hello world")
-        mock_run.assert_called_once()
-        cmd = mock_run.call_args[0][0]
-        self.assertEqual(cmd, ["claude", "-p", "hi"])
+        mock_popen.assert_called_once()
+        cmd = mock_popen.call_args[0][0]
+        self.assertEqual(cmd, ["claude", "-p", "-"])
+        mock_proc.communicate.assert_called_once_with(input="hi", timeout=120)
 
-    @patch("llm_providers.subprocess.run")
-    def test_send_with_model(self, mock_run):
-        mock_run.return_value = MagicMock(returncode=0, stdout="ok")
+    @patch("llm_providers.subprocess.Popen")
+    def test_send_with_model(self, mock_popen):
+        mock_proc = MagicMock()
+        mock_proc.communicate.return_value = ("ok", "")
+        mock_proc.returncode = 0
+        mock_popen.return_value = mock_proc
         p = ClaudeCLIProvider(model="sonnet")
         p.send("hi")
-        cmd = mock_run.call_args[0][0]
-        self.assertEqual(cmd, ["claude", "-p", "hi", "--model", "sonnet"])
+        cmd = mock_popen.call_args[0][0]
+        self.assertEqual(cmd, ["claude", "-p", "-", "--model", "sonnet"])
 
-    @patch("llm_providers.subprocess.run")
-    def test_send_failure_returns_none(self, mock_run):
-        mock_run.return_value = MagicMock(returncode=1, stderr="error msg")
+    @patch("llm_providers.subprocess.Popen")
+    def test_send_failure_returns_none(self, mock_popen):
+        mock_proc = MagicMock()
+        mock_proc.communicate.return_value = ("", "error msg")
+        mock_proc.returncode = 1
+        mock_popen.return_value = mock_proc
         p = ClaudeCLIProvider()
         result = p.send("hi")
         self.assertIsNone(result)
 
-    @patch("llm_providers.subprocess.run", side_effect=FileNotFoundError)
-    def test_send_missing_binary(self, mock_run):
+    @patch("llm_providers.subprocess.Popen", side_effect=FileNotFoundError)
+    def test_send_missing_binary(self, mock_popen):
         p = ClaudeCLIProvider()
         result = p.send("hi")
         self.assertIsNone(result)
 
-    @patch("llm_providers.subprocess.run", side_effect=__import__("subprocess").TimeoutExpired(cmd="claude", timeout=10))
-    def test_send_timeout(self, mock_run):
+    @patch("llm_providers.subprocess.Popen")
+    def test_send_timeout(self, mock_popen):
+        mock_proc = MagicMock()
+        mock_proc.communicate.side_effect = __import__("subprocess").TimeoutExpired(cmd="claude", timeout=10)
+        mock_popen.return_value = mock_proc
         p = ClaudeCLIProvider(timeout=10)
         result = p.send("hi")
         self.assertIsNone(result)
+        mock_proc.kill.assert_called_once()
+        mock_proc.wait.assert_called_once()
 
 
 # ── CodexCLIProvider tests ────────────────────────────────────────────────
 
 
 class TestCodexCLIProvider(unittest.TestCase):
-    @patch("llm_providers.subprocess.run")
-    def test_send_success(self, mock_run):
-        mock_run.return_value = MagicMock(returncode=0, stdout="codex output")
+    @patch("llm_providers.subprocess.Popen")
+    def test_send_success(self, mock_popen):
+        mock_proc = MagicMock()
+        mock_proc.communicate.return_value = ("codex output", "")
+        mock_proc.returncode = 0
+        mock_popen.return_value = mock_proc
         p = CodexCLIProvider()
         result = p.send("hi")
         self.assertEqual(result, "codex output")
-        cmd = mock_run.call_args[0][0]
-        self.assertEqual(cmd, ["codex", "--quiet", "hi"])
+        cmd = mock_popen.call_args[0][0]
+        self.assertEqual(cmd, ["codex", "--quiet", "-"])
 
     def test_name(self):
         p = CodexCLIProvider(model="o3")
@@ -138,14 +156,17 @@ class TestCodexCLIProvider(unittest.TestCase):
 
 
 class TestGeminiCLIProvider(unittest.TestCase):
-    @patch("llm_providers.subprocess.run")
-    def test_send_success(self, mock_run):
-        mock_run.return_value = MagicMock(returncode=0, stdout="gemini output")
+    @patch("llm_providers.subprocess.Popen")
+    def test_send_success(self, mock_popen):
+        mock_proc = MagicMock()
+        mock_proc.communicate.return_value = ("gemini output", "")
+        mock_proc.returncode = 0
+        mock_popen.return_value = mock_proc
         p = GeminiCLIProvider()
         result = p.send("hi")
         self.assertEqual(result, "gemini output")
-        cmd = mock_run.call_args[0][0]
-        self.assertEqual(cmd, ["gemini", "-p", "hi"])
+        cmd = mock_popen.call_args[0][0]
+        self.assertEqual(cmd, ["gemini", "-p", "-"])
 
     def test_name(self):
         p = GeminiCLIProvider(model="2.5-pro")
@@ -393,6 +414,189 @@ class TestCLIArgs(unittest.TestCase):
         for name in PROVIDERS:
             args = self._parse("--llm", name)
             self.assertEqual(args.llm, name)
+
+
+# ── Stdin-based CLI provider tests ────────────────────────────────────────
+
+
+class TestCLIProvidersUseStdin(unittest.TestCase):
+    """Verify all CLI providers pipe prompt via stdin, not as a CLI argument."""
+
+    @patch("llm_providers.subprocess.Popen")
+    def test_claude_cli_sends_prompt_via_stdin(self, mock_popen):
+        mock_proc = MagicMock()
+        mock_proc.communicate.return_value = ("response", "")
+        mock_proc.returncode = 0
+        mock_popen.return_value = mock_proc
+
+        p = ClaudeCLIProvider()
+        p.send("long prompt here")
+
+        # Prompt should NOT be in the command list
+        cmd = mock_popen.call_args[0][0]
+        self.assertNotIn("long prompt here", cmd)
+        # Prompt should be passed via stdin
+        mock_proc.communicate.assert_called_once_with(input="long prompt here", timeout=120)
+
+    @patch("llm_providers.subprocess.Popen")
+    def test_codex_cli_sends_prompt_via_stdin(self, mock_popen):
+        mock_proc = MagicMock()
+        mock_proc.communicate.return_value = ("response", "")
+        mock_proc.returncode = 0
+        mock_popen.return_value = mock_proc
+
+        p = CodexCLIProvider()
+        p.send("long prompt here")
+
+        cmd = mock_popen.call_args[0][0]
+        self.assertNotIn("long prompt here", cmd)
+        mock_proc.communicate.assert_called_once_with(input="long prompt here", timeout=120)
+
+    @patch("llm_providers.subprocess.Popen")
+    def test_gemini_cli_sends_prompt_via_stdin(self, mock_popen):
+        mock_proc = MagicMock()
+        mock_proc.communicate.return_value = ("response", "")
+        mock_proc.returncode = 0
+        mock_popen.return_value = mock_proc
+
+        p = GeminiCLIProvider()
+        p.send("long prompt here")
+
+        cmd = mock_popen.call_args[0][0]
+        self.assertNotIn("long prompt here", cmd)
+        mock_proc.communicate.assert_called_once_with(input="long prompt here", timeout=120)
+
+
+class TestCLIStreamingCleanup(unittest.TestCase):
+    """Verify streaming generators clean up subprocesses properly."""
+
+    @patch("llm_providers.subprocess.Popen")
+    def test_claude_streaming_cleanup_on_abandon(self, mock_popen):
+        mock_proc = MagicMock()
+        mock_proc.stdin = MagicMock()
+        mock_proc.stdout = iter(["line1\n", "line2\n"])
+        mock_proc.poll.return_value = None  # still running
+        mock_popen.return_value = mock_proc
+
+        p = ClaudeCLIProvider()
+        gen = p.send_streaming("test prompt")
+        next(gen)  # consume first line
+        gen.close()  # abandon the generator
+
+        # Process should be killed
+        mock_proc.kill.assert_called()
+
+    @patch("llm_providers.subprocess.Popen")
+    def test_codex_streaming_cleanup_on_abandon(self, mock_popen):
+        mock_proc = MagicMock()
+        mock_proc.stdin = MagicMock()
+        mock_proc.stdout = iter(["line1\n", "line2\n"])
+        mock_proc.poll.return_value = None  # still running
+        mock_popen.return_value = mock_proc
+
+        p = CodexCLIProvider()
+        gen = p.send_streaming("test prompt")
+        next(gen)
+        gen.close()
+
+        mock_proc.kill.assert_called()
+
+    @patch("llm_providers.subprocess.Popen")
+    def test_gemini_streaming_cleanup_on_abandon(self, mock_popen):
+        mock_proc = MagicMock()
+        mock_proc.stdin = MagicMock()
+        mock_proc.stdout = iter(["line1\n", "line2\n"])
+        mock_proc.poll.return_value = None  # still running
+        mock_popen.return_value = mock_proc
+
+        p = GeminiCLIProvider()
+        gen = p.send_streaming("test prompt")
+        next(gen)
+        gen.close()
+
+        mock_proc.kill.assert_called()
+
+    @patch("llm_providers.subprocess.Popen")
+    def test_streaming_no_kill_when_process_exited(self, mock_popen):
+        """If process already exited, kill should not be called."""
+        mock_proc = MagicMock()
+        mock_proc.stdin = MagicMock()
+        mock_proc.stdout = iter(["line1\n"])
+        mock_proc.poll.return_value = 0  # already exited
+        mock_proc.wait.return_value = 0
+        mock_popen.return_value = mock_proc
+
+        p = ClaudeCLIProvider()
+        list(p.send_streaming("test"))  # fully consume
+
+        mock_proc.kill.assert_not_called()
+
+
+class TestOllamaTimeout(unittest.TestCase):
+    """Verify Ollama urlopen calls include a timeout."""
+
+    @patch("llm_providers.urllib.request.urlopen")
+    def test_send_includes_timeout(self, mock_urlopen):
+        body = json.dumps({"response": "ok"}).encode()
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = body
+        mock_resp.__enter__ = lambda s: s
+        mock_resp.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = mock_resp
+
+        p = OllamaProvider()
+        p.send("hi")
+
+        # urlopen should be called with timeout=60
+        call_kwargs = mock_urlopen.call_args
+        self.assertEqual(call_kwargs.kwargs.get("timeout"), 60)
+
+    @patch("llm_providers.urllib.request.urlopen")
+    def test_send_streaming_includes_timeout(self, mock_urlopen):
+        lines = [json.dumps({"response": "ok"}).encode() + b"\n"]
+        mock_resp = MagicMock()
+        mock_resp.__enter__ = lambda s: s
+        mock_resp.__exit__ = MagicMock(return_value=False)
+        mock_resp.__iter__ = lambda s: iter(lines)
+        mock_urlopen.return_value = mock_resp
+
+        p = OllamaProvider()
+        list(p.send_streaming("hi"))
+
+        call_kwargs = mock_urlopen.call_args
+        self.assertEqual(call_kwargs.kwargs.get("timeout"), 60)
+
+
+class TestGeminiDefaultModel(unittest.TestCase):
+    """Verify Gemini API uses updated default model."""
+
+    @patch.dict("os.environ", {"GEMINI_API_KEY": "test-key"}, clear=False)
+    def test_default_model_is_gemini_2_flash(self):
+        mock_google = MagicMock()
+        mock_genai = MagicMock()
+        with patch.dict("sys.modules", {
+            "google": mock_google,
+            "google.generativeai": mock_genai,
+        }):
+            p = GeminiAPIProvider()
+        self.assertEqual(p.model, "gemini-2.0-flash")
+
+
+class TestDispatchLock(unittest.TestCase):
+    """Verify LLMDispatcher has a dispatch lock."""
+
+    def test_dispatch_lock_exists(self):
+        import sys
+        import time
+        sys.modules["numpy"] = MagicMock()
+        sys.modules["sounddevice"] = MagicMock()
+        sys.modules["faster_whisper"] = MagicMock()
+        from live_scribe import LLMDispatcher, TranscriptionBuffer
+        import threading
+
+        buf = TranscriptionBuffer()
+        d = LLMDispatcher(buffer=buf, system_prompt="test")
+        self.assertIsInstance(d._dispatch_lock, threading.Lock)
 
 
 if __name__ == "__main__":
