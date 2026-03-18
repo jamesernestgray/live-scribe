@@ -60,16 +60,22 @@ class ClaudeCLIProvider(LLMProvider):
         return label
 
     def send(self, prompt: str) -> str | None:
-        cmd = ["claude", "-p", prompt]
+        cmd = ["claude", "-p", "-"]
         if self.model:
             cmd.extend(["--model", self.model])
         try:
-            r = subprocess.run(cmd, capture_output=True, text=True, timeout=self.timeout)
-            if r.returncode == 0:
-                return r.stdout.strip()
+            proc = subprocess.Popen(
+                cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE, text=True,
+            )
+            stdout, stderr = proc.communicate(input=prompt, timeout=self.timeout)
+            if proc.returncode == 0:
+                return stdout.strip()
             import sys
-            print(f"  ⚠ claude exited {r.returncode}: {r.stderr[:200]}", file=sys.stderr)
+            print(f"  ⚠ claude exited {proc.returncode}: {stderr[:200]}", file=sys.stderr)
         except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
             import sys
             print("  ⚠ claude timed out", file=sys.stderr)
         except FileNotFoundError:
@@ -78,19 +84,32 @@ class ClaudeCLIProvider(LLMProvider):
         return None
 
     def send_streaming(self, prompt: str) -> Generator[str, None, None]:
-        cmd = ["claude", "-p", prompt]
+        cmd = ["claude", "-p", "-"]
         if self.model:
             cmd.extend(["--model", self.model])
+        proc = None
         try:
             proc = subprocess.Popen(
-                cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE, text=True,
             )
+            proc.stdin.write(prompt)
+            proc.stdin.close()
             for line in proc.stdout:
                 yield line
-            proc.wait()
+            proc.wait(timeout=30)
         except FileNotFoundError:
             import sys
             print("  ⚠ 'claude' not found in PATH", file=sys.stderr)
+        except Exception:
+            if proc and proc.poll() is None:
+                proc.kill()
+                proc.wait()
+            raise
+        finally:
+            if proc and proc.poll() is None:
+                proc.kill()
+                proc.wait()
 
 
 # ---------------------------------------------------------------------------
@@ -215,16 +234,22 @@ class CodexCLIProvider(LLMProvider):
         return label
 
     def send(self, prompt: str) -> str | None:
-        cmd = ["codex", "--quiet", prompt]
+        cmd = ["codex", "--quiet", "-"]
         if self.model:
             cmd.extend(["--model", self.model])
         try:
-            r = subprocess.run(cmd, capture_output=True, text=True, timeout=self.timeout)
-            if r.returncode == 0:
-                return r.stdout.strip()
+            proc = subprocess.Popen(
+                cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE, text=True,
+            )
+            stdout, stderr = proc.communicate(input=prompt, timeout=self.timeout)
+            if proc.returncode == 0:
+                return stdout.strip()
             import sys
-            print(f"  ⚠ codex exited {r.returncode}: {r.stderr[:200]}", file=sys.stderr)
+            print(f"  ⚠ codex exited {proc.returncode}: {stderr[:200]}", file=sys.stderr)
         except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
             import sys
             print("  ⚠ codex timed out", file=sys.stderr)
         except FileNotFoundError:
@@ -233,19 +258,32 @@ class CodexCLIProvider(LLMProvider):
         return None
 
     def send_streaming(self, prompt: str) -> Generator[str, None, None]:
-        cmd = ["codex", "--quiet", prompt]
+        cmd = ["codex", "--quiet", "-"]
         if self.model:
             cmd.extend(["--model", self.model])
+        proc = None
         try:
             proc = subprocess.Popen(
-                cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE, text=True,
             )
+            proc.stdin.write(prompt)
+            proc.stdin.close()
             for line in proc.stdout:
                 yield line
-            proc.wait()
+            proc.wait(timeout=30)
         except FileNotFoundError:
             import sys
             print("  ⚠ 'codex' not found in PATH", file=sys.stderr)
+        except Exception:
+            if proc and proc.poll() is None:
+                proc.kill()
+                proc.wait()
+            raise
+        finally:
+            if proc and proc.poll() is None:
+                proc.kill()
+                proc.wait()
 
 
 # ---------------------------------------------------------------------------
@@ -266,7 +304,7 @@ class GeminiAPIProvider(LLMProvider):
         if not api_key:
             raise ValueError("Set GEMINI_API_KEY environment variable")
         genai.configure(api_key=api_key)
-        self.model = model or "gemini-pro"
+        self.model = model or "gemini-2.0-flash"
         self._genai = genai
         self._model = genai.GenerativeModel(self.model)
 
@@ -313,16 +351,22 @@ class GeminiCLIProvider(LLMProvider):
         return label
 
     def send(self, prompt: str) -> str | None:
-        cmd = ["gemini", "-p", prompt]
+        cmd = ["gemini", "-p", "-"]
         if self.model:
             cmd.extend(["--model", self.model])
         try:
-            r = subprocess.run(cmd, capture_output=True, text=True, timeout=self.timeout)
-            if r.returncode == 0:
-                return r.stdout.strip()
+            proc = subprocess.Popen(
+                cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE, text=True,
+            )
+            stdout, stderr = proc.communicate(input=prompt, timeout=self.timeout)
+            if proc.returncode == 0:
+                return stdout.strip()
             import sys
-            print(f"  ⚠ gemini exited {r.returncode}: {r.stderr[:200]}", file=sys.stderr)
+            print(f"  ⚠ gemini exited {proc.returncode}: {stderr[:200]}", file=sys.stderr)
         except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
             import sys
             print("  ⚠ gemini timed out", file=sys.stderr)
         except FileNotFoundError:
@@ -331,19 +375,32 @@ class GeminiCLIProvider(LLMProvider):
         return None
 
     def send_streaming(self, prompt: str) -> Generator[str, None, None]:
-        cmd = ["gemini", "-p", prompt]
+        cmd = ["gemini", "-p", "-"]
         if self.model:
             cmd.extend(["--model", self.model])
+        proc = None
         try:
             proc = subprocess.Popen(
-                cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE, text=True,
             )
+            proc.stdin.write(prompt)
+            proc.stdin.close()
             for line in proc.stdout:
                 yield line
-            proc.wait()
+            proc.wait(timeout=30)
         except FileNotFoundError:
             import sys
             print("  ⚠ 'gemini' not found in PATH", file=sys.stderr)
+        except Exception:
+            if proc and proc.poll() is None:
+                proc.kill()
+                proc.wait()
+            raise
+        finally:
+            if proc and proc.poll() is None:
+                proc.kill()
+                proc.wait()
 
 
 # ---------------------------------------------------------------------------
@@ -379,7 +436,7 @@ class OllamaProvider(LLMProvider):
             headers={"Content-Type": "application/json"},
         )
         try:
-            with urllib.request.urlopen(req) as resp:
+            with urllib.request.urlopen(req, timeout=60) as resp:
                 body = json.loads(resp.read().decode())
                 return body.get("response")
         except (urllib.error.URLError, urllib.error.HTTPError) as exc:
@@ -400,7 +457,7 @@ class OllamaProvider(LLMProvider):
             headers={"Content-Type": "application/json"},
         )
         try:
-            with urllib.request.urlopen(req) as resp:
+            with urllib.request.urlopen(req, timeout=60) as resp:
                 for line in resp:
                     if line.strip():
                         chunk = json.loads(line.decode())

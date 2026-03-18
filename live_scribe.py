@@ -8,6 +8,7 @@ Supports multiple LLM backends via --llm (default: claude-cli).
 """
 
 import argparse
+import atexit
 import platform
 import signal
 import sys
@@ -344,6 +345,7 @@ class LLMDispatcher:
         self._history: list[dict] = []  # {"transcript": str, "response": str}
         self._running = False
         self._dispatch_count = 0
+        self._dispatch_lock = threading.Lock()
         self._session_log_fh = None
         if session_log_file:
             self._session_log_fh = open(session_log_file, "a", encoding="utf-8")
@@ -394,6 +396,11 @@ class LLMDispatcher:
 
     def dispatch(self) -> bool:
         """Send unsent transcript to the LLM. Returns True if anything was sent."""
+        with self._dispatch_lock:
+            return self._dispatch_unlocked()
+
+    def _dispatch_unlocked(self) -> bool:
+        """Internal dispatch implementation (must be called with _dispatch_lock held)."""
         if self.context:
             prior, new = self.buffer.take_with_context(self.context_limit)
             if not new:
@@ -770,10 +777,24 @@ examples:
         conversation_limit=args.conversation_limit,
     )
 
-    def shutdown(sig=None, frame=None):
-        print("\n\n  Shutting down…")
+    _shutdown_requested = False
+
+    def _cleanup():
+        """Clean up resources (safe to call multiple times)."""
         dispatcher.stop()
         transcriber.stop()
+
+    # Register atexit handler to ensure file handles are closed on any exit path
+    atexit.register(_cleanup)
+
+    def shutdown(sig=None, frame=None):
+        nonlocal _shutdown_requested
+        _shutdown_requested = True
+
+    def _print_session_summary():
+        """Print session transcript and conversation summary."""
+        print("\n\n  Shutting down…")
+        _cleanup()
 
         all_segs = transcriber.buffer.all()
         if all_segs:
@@ -796,8 +817,6 @@ examples:
             print(f"  {convo_summary}")
             print(f"{'━'*60}\n")
 
-        sys.exit(0)
-
     signal.signal(signal.SIGINT, shutdown)
     signal.signal(signal.SIGTERM, shutdown)
 
@@ -805,7 +824,7 @@ examples:
     if args.audio_file:
         transcriber.transcribe_file(args.audio_file)
         dispatcher.dispatch()
-        shutdown()
+        _print_session_summary()
         return
 
     # ── Live microphone mode ──
@@ -814,16 +833,19 @@ examples:
 
     if manual:
         print("  🎙  Listening… (press Enter to send to LLM)\n")
-        while True:
+        while not _shutdown_requested:
             try:
                 input()
-                dispatcher.dispatch()
+                if not _shutdown_requested:
+                    dispatcher.dispatch()
             except EOFError:
-                shutdown()
+                break
     else:
         print("  🎙  Listening…\n")
-        while True:
+        while not _shutdown_requested:
             time.sleep(0.5)
+
+    _print_session_summary()
 
 
 if __name__ == "__main__":
