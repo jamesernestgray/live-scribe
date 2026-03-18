@@ -627,14 +627,133 @@ class LLMDispatcher:
 ClaudeDispatcher = LLMDispatcher
 
 
-def save_transcript(segments: list[dict], path: Path):
-    """Save full session transcript to file."""
-    with open(path, "w") as f:
+def _save_txt(segments: list[dict], path: Path, **kwargs):
+    """Save transcript in plain-text format (default)."""
+    with open(path, "w", encoding="utf-8") as f:
         for seg in segments:
             ts = datetime.fromtimestamp(seg["time"]).strftime("%Y-%m-%d %H:%M:%S")
             spk = f" [{seg['speaker']}]" if seg.get("speaker") else ""
             f.write(f"[{ts}]{spk} {seg['text']}\n")
-    print(f"  📄 Transcript saved to {path}")
+
+
+def _save_md(segments: list[dict], path: Path, dispatches: list[dict] | None = None, **kwargs):
+    """Save transcript in Markdown format with optional LLM analysis."""
+    if not segments:
+        Path(path).write_text("")
+        return
+    session_date = datetime.fromtimestamp(segments[0]["time"]).strftime("%Y-%m-%d")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(f"# Live Scribe Session - {session_date}\n\n")
+        f.write("## Transcript\n\n")
+        for seg in segments:
+            ts = datetime.fromtimestamp(seg["time"]).strftime("%H:%M:%S")
+            spk = seg.get("speaker") or "UNKNOWN"
+            f.write(f"**{ts} - {spk}:** {seg['text']}\n\n")
+        if dispatches:
+            f.write("---\n\n")
+            f.write("## LLM Analysis\n\n")
+            for i, d in enumerate(dispatches, 1):
+                ts = d.get("time", "")
+                f.write(f"### Dispatch #{i} ({ts})\n")
+                f.write(f"{d.get('response', '(no response)')}\n\n")
+
+
+def _save_json(segments: list[dict], path: Path, dispatches: list[dict] | None = None,
+               model: str = "base", language: str | None = None,
+               provider: str = "claude-cli", **kwargs):
+    """Save transcript in JSON format with session metadata."""
+    if not segments:
+        data = {"session": {}, "segments": [], "dispatches": []}
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+            f.write("\n")
+        return
+    start_ts = segments[0]["time"]
+    end_ts = segments[-1]["time"]
+    data = {
+        "session": {
+            "start": datetime.fromtimestamp(start_ts).strftime("%Y-%m-%dT%H:%M:%S"),
+            "end": datetime.fromtimestamp(end_ts).strftime("%Y-%m-%dT%H:%M:%S"),
+            "model": model,
+            "language": language or "auto",
+            "provider": provider,
+        },
+        "segments": [
+            {
+                "time": datetime.fromtimestamp(seg["time"]).strftime("%H:%M:%S"),
+                "speaker": seg.get("speaker") or "UNKNOWN",
+                "text": seg["text"],
+            }
+            for seg in segments
+        ],
+        "dispatches": [],
+    }
+    if dispatches:
+        data["dispatches"] = [
+            {
+                "id": i,
+                "time": d.get("time", ""),
+                "segments_count": d.get("segments_count", 0),
+                "response": d.get("response", ""),
+            }
+            for i, d in enumerate(dispatches, 1)
+        ]
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+        f.write("\n")
+
+
+def _save_srt(segments: list[dict], path: Path, **kwargs):
+    """Save transcript in SRT subtitle format with relative timestamps."""
+    if not segments:
+        Path(path).write_text("")
+        return
+    session_start = segments[0]["time"]
+
+    def _fmt_srt_ts(seconds: float) -> str:
+        """Format seconds as SRT timestamp: HH:MM:SS,mmm"""
+        hours = int(seconds // 3600)
+        minutes = int((seconds % 3600) // 60)
+        secs = int(seconds % 60)
+        millis = int((seconds % 1) * 1000)
+        return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
+
+    with open(path, "w", encoding="utf-8") as f:
+        for i, seg in enumerate(segments, 1):
+            rel_start = seg["time"] - session_start
+            # Default duration: until next segment, or 6 seconds for the last one
+            if i < len(segments):
+                rel_end = segments[i]["time"] - session_start
+            else:
+                rel_end = rel_start + 6.0
+            spk = f"[{seg['speaker']}] " if seg.get("speaker") else ""
+            f.write(f"{i}\n")
+            f.write(f"{_fmt_srt_ts(rel_start)} --> {_fmt_srt_ts(rel_end)}\n")
+            f.write(f"{spk}{seg['text']}\n\n")
+
+
+_FORMAT_SAVERS = {
+    "txt": _save_txt,
+    "md": _save_md,
+    "json": _save_json,
+    "srt": _save_srt,
+}
+
+
+def save_transcript(segments: list[dict], path: Path, fmt: str = "txt",
+                    dispatches: list[dict] | None = None, **kwargs):
+    """Save full session transcript to file in the specified format.
+
+    Args:
+        segments: List of transcript segment dicts with time, text, speaker.
+        path: Output file path.
+        fmt: Format string — one of 'txt', 'md', 'json', 'srt'.
+        dispatches: Optional list of dispatch history dicts for md/json formats.
+        **kwargs: Extra metadata (model, language, provider) for json format.
+    """
+    saver = _FORMAT_SAVERS.get(fmt, _save_txt)
+    saver(segments, path, dispatches=dispatches, **kwargs)
+    print(f"  📄 Transcript saved to {path} (format: {fmt})")
 
 
 def main():
@@ -735,6 +854,11 @@ examples:
     parser.add_argument(
         "--save", type=str, default=None,
         help="Save full transcript to this file on exit",
+    )
+    parser.add_argument(
+        "--format", dest="save_format", default="txt",
+        choices=["txt", "md", "json", "srt"],
+        help="Export format for --save (default: txt)",
     )
     parser.add_argument(
         "--diarize", action="store_true",
@@ -933,6 +1057,9 @@ examples:
         print(f"║  Streaming to  : {args.output:<40}║")
     if args.log_session:
         print(f"║  Session log   : {args.log_session:<40}║")
+    if args.save:
+        save_label = f"{args.save} ({args.save_format})"
+        print(f"║  Save file     : {save_label:<40}║")
     stream_label = "on" if args.stream else "off"
     print(f"║  Streaming     : {stream_label:<40}║")
     print("╠══════════════════════════════════════════════════════════╣")
@@ -997,7 +1124,29 @@ examples:
             print(f"  {len(all_segs)} segment(s) recorded\n")
 
             if args.save:
-                save_transcript(all_segs, Path(args.save))
+                # Build dispatch metadata from LLM history for md/json formats
+                dispatch_data = None
+                if dispatcher._history:
+                    dispatch_data = []
+                    for h in dispatcher._history:
+                        # Extract timestamp from the first line of transcript if available
+                        first_line = h["transcript"].split("\n")[0] if h["transcript"] else ""
+                        ts_match = ""
+                        if first_line.startswith("["):
+                            ts_match = first_line.split("]")[0].lstrip("[")
+                        dispatch_data.append({
+                            "time": ts_match,
+                            "response": h["response"],
+                            "segments_count": h["transcript"].count("\n") + 1 if h["transcript"] else 0,
+                        })
+                save_transcript(
+                    all_segs, Path(args.save),
+                    fmt=args.save_format,
+                    dispatches=dispatch_data,
+                    model=args.model,
+                    language=args.language,
+                    provider=args.llm,
+                )
 
         convo_summary = dispatcher.conversation_summary()
         if convo_summary:
