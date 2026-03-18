@@ -19,7 +19,7 @@
                 + 'If they\'re discussing a design or problem, contribute meaningfully. '
                 + 'Be concise and direct.',
             interval: 60,
-            claude_model: null,
+            llm_model: null,
         },
     };
 
@@ -102,7 +102,7 @@
                     LiveScribeUI.addResponse({
                         id: data.dispatch_id,
                         time: new Date().toLocaleTimeString('en-GB', { hour12: false }),
-                        response: '(Dispatched to Claude \u2014 awaiting response...)',
+                        response: '(Dispatched to LLM \u2014 awaiting response...)',
                     });
                 }
             });

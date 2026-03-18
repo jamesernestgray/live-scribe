@@ -163,7 +163,7 @@ var LiveScribeUI = (function () {
             language: document.getElementById('setting-language').value || null,
             interval: parseInt(document.getElementById('setting-interval').value, 10) || 60,
             prompt: document.getElementById('setting-prompt').value,
-            claude_model: document.getElementById('setting-claude-model').value || null,
+            llm_model: document.getElementById('setting-llm-model').value || null,
         };
     }
 
@@ -172,7 +172,7 @@ var LiveScribeUI = (function () {
         if (settings.language) document.getElementById('setting-language').value = settings.language;
         if (settings.interval) document.getElementById('setting-interval').value = settings.interval;
         if (settings.prompt) document.getElementById('setting-prompt').value = settings.prompt;
-        if (settings.claude_model) document.getElementById('setting-claude-model').value = settings.claude_model;
+        if (settings.llm_model) document.getElementById('setting-llm-model').value = settings.llm_model;
     }
 
     function setTheme(theme) {

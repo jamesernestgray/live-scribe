@@ -50,7 +50,11 @@ def reset_server_state():
         "interval": 60,
         "context": False,
         "context_limit": 0,
-        "claude_model": None,
+        "llm": "claude-cli",
+        "llm_model": None,
+        "stream": False,
+        "conversation": False,
+        "diarize": False,
     })
     yield
 
@@ -208,6 +212,18 @@ class TestStartStopEndpoints:
         assert resp.json()["ok"] is True
         assert web_server._recording is False
 
+    @patch("web_server.AudioTranscriber")
+    def test_start_with_config(self, mock_transcriber_cls, client):
+        mock_instance = MagicMock()
+        mock_instance.buffer = TranscriptionBuffer()
+        mock_transcriber_cls.return_value = mock_instance
+
+        resp = client.post("/api/start", json={"model": "small", "language": "en"})
+        assert resp.status_code == 200
+        assert resp.json()["ok"] is True
+        assert web_server._settings["model"] == "small"
+        assert web_server._settings["language"] == "en"
+
 
 class TestDispatchEndpoint:
     def test_dispatch_without_session(self, client):
@@ -253,7 +269,7 @@ class TestWebSocket:
         with client.websocket_connect("/ws") as ws:
             ws.receive_json()  # initial status
             ws.send_text("not valid json")
-            # Should not crash — connection stays open
+            # Should not crash -- connection stays open
 
 
 # ---------- WebSocket message parsing ----------
@@ -292,3 +308,71 @@ class TestMessageParsing:
         result = web_server._status_dict()
         assert result["recording"] is True
         assert result["segments"] == 2
+
+
+# ---------- Security / binding ----------
+
+class TestSecurity:
+    def test_default_host_is_localhost(self):
+        """start_web_server should default to 127.0.0.1, not 0.0.0.0."""
+        import inspect
+        sig = inspect.signature(web_server.start_web_server)
+        assert sig.parameters["host"].default == "127.0.0.1"
+
+    def test_ws_lock_is_asyncio(self):
+        """_ws_lock should be an asyncio.Lock, not threading.Lock."""
+        import asyncio
+        assert isinstance(web_server._ws_lock, asyncio.Lock)
+
+
+# ---------- LLM naming ----------
+
+class TestLLMNaming:
+    def test_uses_llm_dispatcher(self):
+        """web_server should import LLMDispatcher, not ClaudeDispatcher."""
+        assert hasattr(web_server, 'LLMDispatcher')
+
+    def test_settings_has_llm_keys(self):
+        """Settings should have llm/llm_model keys, not claude_model."""
+        assert "llm" in web_server._settings
+        assert "llm_model" in web_server._settings
+
+    def test_web_ui_no_claude_hardcoding(self):
+        """index.html should not reference 'Claude' in buttons/labels."""
+        html_path = web_server.WEB_DIR / "index.html"
+        html = html_path.read_text()
+        assert "Dispatch to Claude" not in html
+        assert "Dispatch to LLM" in html
+        assert "Responses from Claude" not in html
+
+
+# ---------- Standalone entry point ----------
+
+class TestStandaloneEntryPoint:
+    def test_has_main_block(self):
+        """web_server.py should be launchable standalone with argparse."""
+        source = Path(web_server.__file__).read_text()
+        assert 'if __name__ == "__main__":' in source
+        assert "argparse" in source
+
+
+# ---------- StartConfig model ----------
+
+class TestStartConfig:
+    def test_start_config_fields(self):
+        cfg = web_server.StartConfig(model="small", language="en", stream=True)
+        assert cfg.model == "small"
+        assert cfg.language == "en"
+        assert cfg.stream is True
+
+    def test_start_config_defaults_to_none(self):
+        cfg = web_server.StartConfig()
+        assert cfg.model is None
+        assert cfg.language is None
+        assert cfg.llm is None
+
+    def test_start_config_exclude_none(self):
+        cfg = web_server.StartConfig(model="small")
+        dumped = cfg.model_dump(exclude_none=True)
+        assert "model" in dumped
+        assert "language" not in dumped

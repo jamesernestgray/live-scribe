@@ -47,7 +47,7 @@
                 <span id="response-count" class="badge">0</span>
             </div>
             <div id="responses" class="panel__body">
-                <div class="empty-state">Responses from Claude will appear here</div>
+                <div class="empty-state">LLM responses will appear here</div>
             </div>
         </section>
     </main>
@@ -60,7 +60,7 @@
         </div>
         <div class="bottom-bar__right">
             <button id="btn-dispatch" class="btn btn--secondary" disabled>
-                Dispatch to Claude
+                Dispatch to LLM
             </button>
             <button id="btn-save" class="btn btn--secondary" disabled>
                 Save Transcript
@@ -105,8 +105,8 @@
                     <textarea id="setting-prompt" rows="4">You are a real-time AI collaborator listening to a live audio transcription. Engage with what's being said: answer questions, provide analysis, offer relevant expertise, and surface useful context. If the speaker asks something, answer it directly. If they're discussing a design or problem, contribute meaningfully. Be concise and direct.</textarea>
                 </div>
                 <div class="form-group">
-                    <label for="setting-claude-model">Claude Model (blank = default)</label>
-                    <input id="setting-claude-model" type="text" placeholder="e.g. sonnet, opus">
+                    <label for="setting-llm-model">LLM Model (blank = default)</label>
+                    <input id="setting-llm-model" type="text" placeholder="e.g. sonnet, gpt-4o">
                 </div>
                 <div class="form-group">
                     <label for="setting-theme">Theme</label>
