@@ -326,6 +326,7 @@ class ClaudeDispatcher:
         context: bool = False,
         context_limit: int = 0,
         session_log_file: str | None = None,
+        stream: bool = False,
     ):
         self.buffer = buffer
         self.system_prompt = system_prompt
@@ -334,6 +335,7 @@ class ClaudeDispatcher:
         self.timeout = timeout
         self.context = context
         self.context_limit = context_limit
+        self.stream = stream
         self._running = False
         self._dispatch_count = 0
         self._session_log_fh = None
@@ -383,6 +385,34 @@ class ClaudeDispatcher:
             print("  ⚠ 'claude' not found in PATH", file=sys.stderr)
         return None
 
+    def _call_claude_streaming(self, prompt: str) -> str | None:
+        """Call Claude CLI and stream output character-by-character."""
+        cmd = ["claude", "-p", prompt]
+        if self.claude_model:
+            cmd.extend(["--model", self.claude_model])
+        try:
+            proc = subprocess.Popen(
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1,
+            )
+            full_response = []
+            while True:
+                char = proc.stdout.read(1)
+                if not char:
+                    break
+                print(char, end='', flush=True)
+                full_response.append(char)
+            proc.wait(timeout=self.timeout)
+            if proc.returncode == 0:
+                return ''.join(full_response).strip()
+            stderr = proc.stderr.read()
+            print(f"\n  ⚠ claude exited {proc.returncode}: {stderr[:200]}", file=sys.stderr)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            print("\n  ⚠ claude timed out", file=sys.stderr)
+        except FileNotFoundError:
+            print("  ⚠ 'claude' not found in PATH", file=sys.stderr)
+        return None
+
     def dispatch(self) -> bool:
         """Send unsent transcript to Claude. Returns True if anything was sent."""
         if self.context:
@@ -405,10 +435,16 @@ class ClaudeDispatcher:
         print(f"  🧠 Prompting Claude ({n} new{ctx}) [#{self._dispatch_count}]")
         print(f"{'━'*60}")
 
-        response = self._call_claude(prompt)
-        if response:
-            print(f"\n{response}\n")
-            print(f"{'━'*60}\n")
+        if self.stream:
+            print()  # blank line before streamed output
+            response = self._call_claude_streaming(prompt)
+            if response:
+                print(f"\n{'━'*60}\n")
+        else:
+            response = self._call_claude(prompt)
+            if response:
+                print(f"\n{response}\n")
+                print(f"{'━'*60}\n")
 
         # Session log: write both transcript and response
         if self._session_log_fh:
@@ -523,6 +559,10 @@ examples:
         help="Enable speaker diarization (requires HF_TOKEN, increases chunk to 30s)",
     )
     parser.add_argument(
+        "--stream", action="store_true",
+        help="Stream Claude's response in real-time instead of waiting for completion",
+    )
+    parser.add_argument(
         "--compute", default="cpu",
         choices=["cpu", "cuda", "auto"],
         help="Compute device for whisper (default: cpu)",
@@ -622,6 +662,8 @@ examples:
         print(f"║  Streaming to  : {args.output:<40}║")
     if args.log_session:
         print(f"║  Session log   : {args.log_session:<40}║")
+    stream_label = "on" if args.stream else "off"
+    print(f"║  Streaming     : {stream_label:<40}║")
     print("╠══════════════════════════════════════════════════════════╣")
     if manual:
         print("║  Enter = send to Claude  │  Ctrl+C = stop              ║")
@@ -646,6 +688,7 @@ examples:
         context=args.context,
         context_limit=args.context_limit,
         session_log_file=args.log_session,
+        stream=args.stream,
     )
 
     def shutdown(sig=None, frame=None):
