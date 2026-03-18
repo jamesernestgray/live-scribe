@@ -9,6 +9,7 @@ Supports multiple LLM backends via --llm (default: claude-cli).
 
 import argparse
 import atexit
+import json
 import platform
 import signal
 import sys
@@ -22,6 +23,134 @@ import sounddevice as sd
 from faster_whisper import WhisperModel
 
 from llm_providers import PROVIDERS, create_provider
+
+# ── Prompt Presets ──
+
+BUILTIN_PRESETS = {
+    "collaborator": (
+        "You are a real-time AI collaborator listening to a live audio transcription. "
+        "Engage with what's being said: answer questions, provide analysis, "
+        "offer relevant expertise, and surface useful context. "
+        "If the speaker asks something, answer it directly. "
+        "If they're discussing a design or problem, contribute meaningfully. "
+        "Be concise and direct."
+    ),
+    "meeting-notes": (
+        "You are a meeting note-taker. Produce structured notes from this transcript: "
+        "1) Key discussion points, 2) Decisions made, 3) Action items with owners if mentioned, "
+        "4) Open questions. Be concise, use bullet points."
+    ),
+    "code-review": (
+        "You are a senior software engineer listening to a technical discussion. "
+        "Identify technical decisions being discussed, flag potential risks or issues, "
+        "suggest alternatives where appropriate, and note any architectural concerns. "
+        "Be specific and technical."
+    ),
+    "lecture": (
+        "You are a study assistant listening to a lecture or educational content. "
+        "Summarize the key concepts taught, note any formulas/definitions/terms introduced, "
+        "flag areas that seem important for exams, and identify questions worth asking. "
+        "Organize by topic."
+    ),
+    "interview": (
+        "You are an interview coach analyzing a job interview transcript. "
+        "Note the questions asked, evaluate the responses, suggest improvements, "
+        "and flag any red flags or missed opportunities. Be constructive."
+    ),
+    "brainstorm": (
+        "You are a creative collaborator in a brainstorming session. "
+        "Build on the ideas being discussed, suggest connections between concepts, "
+        "propose alternatives, play devil's advocate where useful, "
+        "and help organize emerging ideas into themes."
+    ),
+}
+
+DEFAULT_PRESET = "collaborator"
+
+PRESET_CONFIG_DIR = Path.home() / ".config" / "live-scribe"
+
+
+def load_custom_presets() -> dict[str, str]:
+    """Load custom presets from ~/.config/live-scribe/presets.toml (or .json).
+
+    Returns a dict mapping preset name to prompt string.
+    """
+    toml_path = PRESET_CONFIG_DIR / "presets.toml"
+    json_path = PRESET_CONFIG_DIR / "presets.json"
+
+    if toml_path.is_file():
+        try:
+            import tomllib
+        except ImportError:
+            try:
+                import tomli as tomllib  # type: ignore[no-redef]
+            except ImportError:
+                tomllib = None  # type: ignore[assignment]
+
+        if tomllib is not None:
+            with open(toml_path, "rb") as f:
+                data = tomllib.load(f)
+            presets = {}
+            for name, value in data.items():
+                if isinstance(value, dict) and "prompt" in value:
+                    presets[name] = value["prompt"]
+                elif isinstance(value, str):
+                    presets[name] = value
+            return presets
+        # Fall through to JSON if toml libraries unavailable
+        print("  Warning: toml library not available, trying JSON fallback", file=sys.stderr)
+
+    if json_path.is_file():
+        with open(json_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        presets = {}
+        for name, value in data.items():
+            if isinstance(value, dict) and "prompt" in value:
+                presets[name] = value["prompt"]
+            elif isinstance(value, str):
+                presets[name] = value
+        return presets
+
+    return {}
+
+
+def get_all_presets() -> dict[str, str]:
+    """Return merged dict of built-in + custom presets (custom wins on conflict)."""
+    merged = dict(BUILTIN_PRESETS)
+    merged.update(load_custom_presets())
+    return merged
+
+
+def format_preset_list(presets: dict[str, str], custom_names: set[str] | None = None) -> str:
+    """Format preset list for display."""
+    if custom_names is None:
+        custom_names = set(load_custom_presets().keys())
+
+    lines = ["Available presets:", ""]
+    # Built-in first
+    builtin_names = [n for n in presets if n in BUILTIN_PRESETS]
+    custom_only = [n for n in presets if n not in BUILTIN_PRESETS]
+
+    if builtin_names:
+        lines.append("  Built-in:")
+        for name in builtin_names:
+            prompt = presets[name]
+            # Truncate long prompts for display
+            preview = prompt[:70] + "..." if len(prompt) > 70 else prompt
+            marker = " *" if name == DEFAULT_PRESET else ""
+            lines.append(f"    {name:<20s} {preview}{marker}")
+
+    if custom_only:
+        lines.append("")
+        lines.append("  Custom (~/.config/live-scribe/presets.toml):")
+        for name in custom_only:
+            prompt = presets[name]
+            preview = prompt[:70] + "..." if len(prompt) > 70 else prompt
+            lines.append(f"    {name:<20s} {preview}")
+
+    lines.append("")
+    lines.append("  * = default")
+    return "\n".join(lines)
 
 
 def find_system_audio_device() -> tuple[int, str] | None:
@@ -530,6 +659,9 @@ examples:
   %(prog)s --log-session session.log # save transcript + Claude responses
   %(prog)s --system-audio            # capture desktop audio via BlackHole/etc.
   %(prog)s --system-audio --input-device 5  # system audio with manual device
+  %(prog)s --preset meeting-notes      # use meeting-notes preset
+  %(prog)s --preset                    # list available presets
+  %(prog)s --list-presets              # list available presets (verbose)
   %(prog)s --web                         # launch web UI on port 8765
   %(prog)s --web --port 9000             # web UI on custom port
 """,
@@ -561,6 +693,15 @@ examples:
             "Be concise and direct."
         ),
         help="System prompt sent to Claude with each transcript batch",
+    )
+    parser.add_argument(
+        "--preset", nargs="?", const="__list__", default=None,
+        help="Use a named prompt preset (built-in or custom). "
+             "Use without a value to list available presets.",
+    )
+    parser.add_argument(
+        "--list-presets", action="store_true",
+        help="List all available presets (built-in + custom) and exit",
     )
     parser.add_argument(
         "--context", action="store_true",
@@ -650,6 +791,39 @@ examples:
     )
 
     args = parser.parse_args()
+
+    # ── Preset resolution ──
+    preset_name = None  # track which preset is active (for banner)
+
+    # --list-presets: print all presets and exit
+    if args.list_presets:
+        all_presets = get_all_presets()
+        print(format_preset_list(all_presets))
+        return
+
+    # --preset without value: list presets and exit
+    if args.preset == "__list__":
+        all_presets = get_all_presets()
+        print(format_preset_list(all_presets))
+        return
+
+    # --preset <name>: resolve to prompt string
+    if args.preset is not None:
+        all_presets = get_all_presets()
+        if args.preset not in all_presets:
+            available = ", ".join(sorted(all_presets.keys()))
+            parser.error(
+                f"Unknown preset '{args.preset}'. Available presets: {available}"
+            )
+        # --preset overrides --prompt
+        if args.prompt != parser.get_default("prompt"):
+            print(
+                "  Warning: --preset overrides --prompt; using preset "
+                f"'{args.preset}'",
+                file=sys.stderr,
+            )
+        args.prompt = all_presets[args.preset]
+        preset_name = args.preset
 
     # Validate --audio-file path
     if args.audio_file and not Path(args.audio_file).is_file():
@@ -749,6 +923,8 @@ examples:
     print(f"║  Chunk size    : {args.chunk}s{' '*(39-len(str(args.chunk)))}║")
     print(f"║  LLM provider  : {llm_label:<40}║")
     print(f"║  LLM trigger   : {trigger_label:<40}║")
+    if preset_name:
+        print(f"║  Preset        : {preset_name:<40}║")
     print(f"║  Context mode  : {context_label:<40}║")
     if system_audio_device_name:
         print(f"║  Audio source  : {system_audio_device_name:<40}║")
