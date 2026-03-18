@@ -1,0 +1,38 @@
+{
+  "expo": {
+    "name": "Live Scribe",
+    "slug": "live-scribe",
+    "version": "0.1.0",
+    "orientation": "default",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#1a1a2e"
+    },
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.livescribe.app",
+      "infoPlist": {
+        "NSMicrophoneUsageDescription": "Live Scribe needs microphone access to transcribe audio in real time."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#1a1a2e"
+      },
+      "package": "com.livescribe.app",
+      "permissions": ["RECORD_AUDIO"]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-av",
+      "expo-secure-store"
+    ]
+  }
+}
