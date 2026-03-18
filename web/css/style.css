@@ -521,6 +521,28 @@ body {
     background: var(--text-muted);
 }
 
+/* ---------- Keyboard Hints ---------- */
+
+.keyboard-hints {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: 12px;
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+.keyboard-hints kbd {
+    display: inline-block;
+    padding: 1px 5px;
+    font-size: 10px;
+    font-family: "SF Mono", "Fira Code", monospace;
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    color: var(--text-muted);
+}
+
 /* ---------- Responsive ---------- */
 
 @media (max-width: 768px) {
@@ -543,6 +565,10 @@ body {
     }
 
     .top-bar__subtitle {
+        display: none;
+    }
+
+    .keyboard-hints {
         display: none;
     }
 }

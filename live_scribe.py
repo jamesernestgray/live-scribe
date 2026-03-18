@@ -9,7 +9,9 @@ Supports multiple LLM backends via --llm (default: claude-cli).
 
 import argparse
 import platform
+import shutil
 import signal
+import subprocess
 import sys
 import threading
 import time
@@ -52,6 +54,26 @@ def get_system_audio_install_instructions() -> str:
         return "Enable Stereo Mix in Sound settings"
     else:
         return "Install a virtual audio loopback driver for your platform"
+
+
+def copy_to_clipboard(text: str) -> bool:
+    """Copy text to the system clipboard. Returns True on success."""
+    system = platform.system()
+    if system == "Darwin":
+        proc = subprocess.run(["pbcopy"], input=text, text=True)
+    elif system == "Linux":
+        # Try xclip, then xsel
+        if shutil.which("xclip"):
+            proc = subprocess.run(["xclip", "-selection", "clipboard"], input=text, text=True)
+        elif shutil.which("xsel"):
+            proc = subprocess.run(["xsel", "--clipboard", "--input"], input=text, text=True)
+        else:
+            return False
+    elif system == "Windows":
+        proc = subprocess.run(["clip"], input=text, text=True)
+    else:
+        return False
+    return proc.returncode == 0
 
 
 class TranscriptionBuffer:
@@ -332,6 +354,7 @@ class LLMDispatcher:
         stream: bool = False,
         conversation: bool = False,
         conversation_limit: int = 0,
+        clipboard: bool = False,
     ):
         self.buffer = buffer
         self.system_prompt = system_prompt
@@ -341,6 +364,7 @@ class LLMDispatcher:
         self.stream = stream
         self.conversation = conversation
         self.conversation_limit = conversation_limit
+        self.clipboard = clipboard
         self._history: list[dict] = []  # {"transcript": str, "response": str}
         self._running = False
         self._dispatch_count = 0
@@ -428,6 +452,11 @@ class LLMDispatcher:
             if response:
                 print(f"\n{response}\n")
                 print(f"{'━'*60}\n")
+
+        # Copy response to clipboard if requested
+        if self.clipboard and response:
+            if copy_to_clipboard(response):
+                print("📋 Copied to clipboard")
 
         # Conversation history: track transcript/response pairs
         if self.conversation and response:
@@ -630,6 +659,10 @@ examples:
         help="Capture system/desktop audio via virtual loopback device (e.g. BlackHole)",
     )
     parser.add_argument(
+        "--clipboard", action="store_true",
+        help="Copy each LLM response to the system clipboard",
+    )
+    parser.add_argument(
         "--web", action="store_true",
         help="Launch the web UI instead of the terminal interface",
     )
@@ -768,6 +801,7 @@ examples:
         stream=args.stream,
         conversation=args.conversation,
         conversation_limit=args.conversation_limit,
+        clipboard=args.clipboard,
     )
 
     def shutdown(sig=None, frame=None):

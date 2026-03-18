@@ -251,7 +251,7 @@ async def api_dispatch():
             resp = {
                 "id": did,
                 "time": datetime.now().strftime("%H:%M:%S"),
-                "response": "(Dispatch sent to Claude CLI — see terminal for output)",
+                "response": "(Dispatch sent to LLM — see terminal for output)",
             }
             _dispatch_responses.append(resp)
 
