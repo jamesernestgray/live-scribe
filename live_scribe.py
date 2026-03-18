@@ -221,6 +221,8 @@ class ClaudeDispatcher:
         timeout: int = 120,
         context: bool = False,
         context_limit: int = 0,
+        conversation: bool = False,
+        conversation_limit: int = 0,
     ):
         self.buffer = buffer
         self.system_prompt = system_prompt
@@ -229,6 +231,9 @@ class ClaudeDispatcher:
         self.timeout = timeout
         self.context = context
         self.context_limit = context_limit
+        self.conversation = conversation
+        self.conversation_limit = conversation_limit
+        self._history: list[dict] = []  # {"transcript": str, "response": str}
         self._running = False
         self._dispatch_count = 0
 
@@ -243,6 +248,20 @@ class ClaudeDispatcher:
 
     def _build_prompt(self, prior: list[dict], new: list[dict]) -> str:
         parts = [self.system_prompt, ""]
+
+        if self.conversation and self._history:
+            history = self._history
+            if self.conversation_limit > 0:
+                history = history[-self.conversation_limit:]
+            parts.append("--- CONVERSATION HISTORY ---")
+            for turn in history:
+                parts.append(turn["transcript"])
+                parts.append(f"YOUR RESPONSE: {turn['response']}")
+                parts.append("")
+            # Remove trailing blank if present before next section
+            if parts[-1] == "":
+                parts.pop()
+            parts.append("")
 
         if prior:
             parts.append("--- PRIOR CONTEXT ---")
@@ -301,6 +320,11 @@ class ClaudeDispatcher:
         if response:
             print(f"\n{response}\n")
             print(f"{'━'*60}\n")
+            if self.conversation:
+                self._history.append({
+                    "transcript": self._format_segments(new),
+                    "response": response,
+                })
         return True
 
     def _timer_loop(self):
@@ -318,6 +342,23 @@ class ClaudeDispatcher:
 
     def stop(self):
         self._running = False
+
+    def conversation_summary(self) -> str | None:
+        """Return a summary of the conversation history, or None if not in conversation mode."""
+        if not self.conversation or not self._history:
+            return None
+        total_turns = len(self._history)
+        total_transcript_chars = sum(len(h["transcript"]) for h in self._history)
+        total_response_chars = sum(len(h["response"]) for h in self._history)
+        lines = [
+            "Conversation summary",
+            f"  Turns           : {total_turns}",
+            f"  Transcript chars: {total_transcript_chars}",
+            f"  Response chars  : {total_response_chars}",
+        ]
+        if self.conversation_limit > 0:
+            lines.append(f"  History limit   : {self.conversation_limit}")
+        return "\n".join(lines)
 
 
 def save_transcript(segments: list[dict], path: Path):
@@ -341,6 +382,8 @@ examples:
   %(prog)s --context --context-limit 20  # rolling window of last 20 segments
   %(prog)s --model small -i 30      # better accuracy, prompt every 30s
   %(prog)s --manual --prompt "Extract action items from this meeting."
+  %(prog)s --conversation           # Claude remembers its prior responses
+  %(prog)s --conversation --conversation-limit 5  # keep last 5 turns
   %(prog)s --list-devices            # show mic options
 """,
     )
@@ -379,6 +422,14 @@ examples:
     parser.add_argument(
         "--context-limit", type=int, default=0,
         help="Max prior segments to include as context (0 = unlimited, default: 0)",
+    )
+    parser.add_argument(
+        "--conversation", action="store_true",
+        help="Maintain conversation history across dispatches so Claude remembers prior responses",
+    )
+    parser.add_argument(
+        "--conversation-limit", type=int, default=0,
+        help="Max conversation turns to include in prompt (0 = unlimited, default: 0)",
     )
     parser.add_argument(
         "--claude-model", default=None,
@@ -432,9 +483,15 @@ examples:
         else "full history" if args.context
         else "new only"
     )
+    convo_label = (
+        f"on (last {args.conversation_limit} turns)" if args.conversation and args.conversation_limit
+        else "on" if args.conversation
+        else "off"
+    )
     print(f"║  Chunk size    : {args.chunk}s{' '*(39-len(str(args.chunk)))}║")
     print(f"║  Claude trigger: {trigger_label:<40}║")
     print(f"║  Context mode  : {context_label:<40}║")
+    print(f"║  Conversation  : {convo_label:<40}║")
     if args.claude_model:
         print(f"║  Claude model  : {args.claude_model:<40}║")
     print("╠══════════════════════════════════════════════════════════╣")
@@ -458,6 +515,8 @@ examples:
         claude_model=args.claude_model,
         context=args.context,
         context_limit=args.context_limit,
+        conversation=args.conversation,
+        conversation_limit=args.conversation_limit,
     )
 
     def shutdown(sig=None, frame=None):
@@ -479,6 +538,12 @@ examples:
 
             if args.save:
                 save_transcript(all_segs, Path(args.save))
+
+        convo_summary = dispatcher.conversation_summary()
+        if convo_summary:
+            print(f"\n{'━'*60}")
+            print(f"  {convo_summary}")
+            print(f"{'━'*60}\n")
 
         sys.exit(0)
 
