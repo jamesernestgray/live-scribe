@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
-live-scribe: Real-time audio transcription with periodic Claude analysis.
+live-scribe: Real-time audio transcription with periodic LLM analysis.
 
 Captures microphone audio, transcribes locally with faster-whisper,
-and periodically sends accumulated transcription to Claude CLI for processing.
+and periodically sends accumulated transcription to an LLM for processing.
+Supports multiple LLM backends via --llm (default: claude-cli).
 """
 
 import argparse
 import signal
-import subprocess
 import sys
 import threading
 import time
@@ -18,6 +18,8 @@ from pathlib import Path
 import numpy as np
 import sounddevice as sd
 from faster_whisper import WhisperModel
+
+from llm_providers import PROVIDERS, create_provider
 
 
 class TranscriptionBuffer:
@@ -209,15 +211,16 @@ class AudioTranscriber:
             self._stream.close()
 
 
-class ClaudeDispatcher:
-    """Sends accumulated transcript to Claude CLI, either on a timer or on demand."""
+class LLMDispatcher:
+    """Sends accumulated transcript to an LLM provider, either on a timer or on demand."""
 
     def __init__(
         self,
         buffer: TranscriptionBuffer,
         system_prompt: str,
+        provider_name: str = "claude-cli",
+        model: str | None = None,
         interval: int | None = None,
-        claude_model: str | None = None,
         timeout: int = 120,
         context: bool = False,
         context_limit: int = 0,
@@ -225,12 +228,17 @@ class ClaudeDispatcher:
         self.buffer = buffer
         self.system_prompt = system_prompt
         self.interval = interval  # None = manual mode
-        self.claude_model = claude_model
-        self.timeout = timeout
         self.context = context
         self.context_limit = context_limit
         self._running = False
         self._dispatch_count = 0
+
+        # Build provider kwargs — CLI providers accept a timeout
+        provider_kwargs: dict = {}
+        if provider_name in ("claude-cli", "codex-cli", "gemini-cli"):
+            provider_kwargs["timeout"] = timeout
+
+        self.provider = create_provider(provider_name, model=model, **provider_kwargs)
 
     @staticmethod
     def _format_segments(segments: list[dict]) -> str:
@@ -255,28 +263,8 @@ class ClaudeDispatcher:
 
         return "\n".join(parts)
 
-    def _call_claude(self, prompt: str) -> str | None:
-        cmd = ["claude", "-p", prompt]
-        if self.claude_model:
-            cmd.extend(["--model", self.claude_model])
-        try:
-            r = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=self.timeout,
-            )
-            if r.returncode == 0:
-                return r.stdout.strip()
-            print(f"  ⚠ claude exited {r.returncode}: {r.stderr[:200]}", file=sys.stderr)
-        except subprocess.TimeoutExpired:
-            print("  ⚠ claude timed out", file=sys.stderr)
-        except FileNotFoundError:
-            print("  ⚠ 'claude' not found in PATH", file=sys.stderr)
-        return None
-
     def dispatch(self) -> bool:
-        """Send unsent transcript to Claude. Returns True if anything was sent."""
+        """Send unsent transcript to the LLM. Returns True if anything was sent."""
         if self.context:
             prior, new = self.buffer.take_with_context(self.context_limit)
             if not new:
@@ -294,10 +282,10 @@ class ClaudeDispatcher:
         n = len(new)
         ctx = f" + {len(prior)} prior" if self.context and prior else ""
         print(f"\n{'━'*60}")
-        print(f"  🧠 Prompting Claude ({n} new{ctx}) [#{self._dispatch_count}]")
+        print(f"  🧠 Prompting {self.provider.name} ({n} new{ctx}) [#{self._dispatch_count}]")
         print(f"{'━'*60}")
 
-        response = self._call_claude(prompt)
+        response = self.provider.send(prompt)
         if response:
             print(f"\n{response}\n")
             print(f"{'━'*60}\n")
@@ -320,6 +308,10 @@ class ClaudeDispatcher:
         self._running = False
 
 
+# Backward-compatible alias
+ClaudeDispatcher = LLMDispatcher
+
+
 def save_transcript(segments: list[dict], path: Path):
     """Save full session transcript to file."""
     with open(path, "w") as f:
@@ -332,11 +324,13 @@ def save_transcript(segments: list[dict], path: Path):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Live audio transcription with periodic Claude analysis.",
+        description="Live audio transcription with periodic LLM analysis.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""\
 examples:
-  %(prog)s                          # defaults: base model, 60s auto, new-only
+  %(prog)s                          # defaults: base model, 60s auto, claude-cli
+  %(prog)s --llm openai --llm-model gpt-4o  # use OpenAI
+  %(prog)s --llm ollama --llm-model llama3   # use local Ollama
   %(prog)s --manual --context       # manual dispatch with full history
   %(prog)s --context --context-limit 20  # rolling window of last 20 segments
   %(prog)s --model small -i 30      # better accuracy, prompt every 30s
@@ -381,8 +375,17 @@ examples:
         help="Max prior segments to include as context (0 = unlimited, default: 0)",
     )
     parser.add_argument(
+        "--llm", default="claude-cli",
+        choices=list(PROVIDERS.keys()),
+        help="LLM provider to use (default: claude-cli)",
+    )
+    parser.add_argument(
+        "--llm-model", default=None,
+        help="Model name for the selected LLM provider",
+    )
+    parser.add_argument(
         "--claude-model", default=None,
-        help="Model to pass to claude CLI (e.g. sonnet, opus)",
+        help="(Deprecated: use --llm-model) Model to pass to claude CLI",
     )
     parser.add_argument(
         "--save", type=str, default=None,
@@ -415,14 +418,29 @@ examples:
     if args.input_device is not None:
         sd.default.device[0] = args.input_device
 
+    # Handle deprecated --claude-model → --llm-model
+    llm_model = args.llm_model
+    if args.claude_model:
+        import warnings
+        warnings.warn(
+            "--claude-model is deprecated, use --llm-model instead",
+            DeprecationWarning,
+            stacklevel=1,
+        )
+        if llm_model is None:
+            llm_model = args.claude_model
+
     manual = args.manual
     trigger_label = "Enter key (manual)" if manual else f"{args.interval}s (auto)"
+    llm_label = args.llm
+    if llm_model:
+        llm_label += f" / {llm_model}"
 
     # ── Banner ──
     print()
     print("╔══════════════════════════════════════════════════════════╗")
     print("║  live-scribe                                            ║")
-    print("║  Real-time transcription → Claude analysis              ║")
+    print("║  Real-time transcription → LLM analysis                 ║")
     print("╠══════════════════════════════════════════════════════════╣")
     diarize_label = "on (pyannote 3.1)" if args.diarize else "off"
     print(f"║  Whisper model : {args.model:<40}║")
@@ -433,13 +451,12 @@ examples:
         else "new only"
     )
     print(f"║  Chunk size    : {args.chunk}s{' '*(39-len(str(args.chunk)))}║")
-    print(f"║  Claude trigger: {trigger_label:<40}║")
+    print(f"║  LLM provider  : {llm_label:<40}║")
+    print(f"║  LLM trigger   : {trigger_label:<40}║")
     print(f"║  Context mode  : {context_label:<40}║")
-    if args.claude_model:
-        print(f"║  Claude model  : {args.claude_model:<40}║")
     print("╠══════════════════════════════════════════════════════════╣")
     if manual:
-        print("║  Enter = send to Claude  │  Ctrl+C = stop              ║")
+        print("║  Enter = send to LLM  │  Ctrl+C = stop                 ║")
     else:
         print("║  Ctrl+C to stop                                        ║")
     print("╚══════════════════════════════════════════════════════════╝")
@@ -451,11 +468,12 @@ examples:
         chunk_sec=args.chunk,
         diarize=args.diarize,
     )
-    dispatcher = ClaudeDispatcher(
+    dispatcher = LLMDispatcher(
         buffer=transcriber.buffer,
         system_prompt=args.prompt,
+        provider_name=args.llm,
+        model=llm_model,
         interval=None if manual else args.interval,
-        claude_model=args.claude_model,
         context=args.context,
         context_limit=args.context_limit,
     )
@@ -489,7 +507,7 @@ examples:
     dispatcher.start_timer()  # no-op in manual mode
 
     if manual:
-        print("  🎙  Listening… (press Enter to send to Claude)\n")
+        print("  🎙  Listening… (press Enter to send to LLM)\n")
         while True:
             try:
                 input()
