@@ -6,6 +6,7 @@ static file serving, WebSocket message handling, and status responses.
 """
 
 import json
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
