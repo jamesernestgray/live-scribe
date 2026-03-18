@@ -523,6 +523,8 @@ examples:
   %(prog)s --log-session session.log # save transcript + Claude responses
   %(prog)s --system-audio            # capture desktop audio via BlackHole/etc.
   %(prog)s --system-audio --input-device 5  # system audio with manual device
+  %(prog)s --web                         # launch web UI on port 8765
+  %(prog)s --web --port 9000             # web UI on custom port
 """,
     )
     parser.add_argument(
@@ -627,6 +629,14 @@ examples:
         "--system-audio", action="store_true",
         help="Capture system/desktop audio via virtual loopback device (e.g. BlackHole)",
     )
+    parser.add_argument(
+        "--web", action="store_true",
+        help="Launch the web UI instead of the terminal interface",
+    )
+    parser.add_argument(
+        "--port", type=int, default=8765,
+        help="Port for the web UI server (default: 8765)",
+    )
 
     args = parser.parse_args()
 
@@ -636,6 +646,20 @@ examples:
 
     if args.list_devices:
         print(sd.query_devices())
+        return
+
+    # ── Web UI mode ──
+    if args.web:
+        from web_server import start_web_server
+        start_web_server(
+            port=args.port,
+            model=args.model,
+            prompt=args.prompt,
+            interval=args.interval,
+            context=args.context,
+            context_limit=args.context_limit,
+            claude_model=args.claude_model,
+        )
         return
 
     # ── System audio / input device selection ──

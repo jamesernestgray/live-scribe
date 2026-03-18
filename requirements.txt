@@ -2,6 +2,11 @@ sounddevice>=0.4.6
 numpy>=1.24
 faster-whisper>=1.0.0
 
+# Web UI
+fastapi>=0.100
+uvicorn>=0.20
+websockets>=11.0
+
 # Optional: speaker diarization (--diarize flag)
 # pyannote.audio>=3.1
 # torch>=2.0
@@ -11,3 +16,7 @@ faster-whisper>=1.0.0
 # openai>=1.0          # --llm openai
 # google-generativeai  # --llm gemini
 # litellm              # --llm litellm
+
+# Dev / testing
+# pytest>=7.0
+# httpx>=0.24

@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>live-scribe</title>
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+    <!-- Top Bar -->
+    <header class="top-bar">
+        <div class="top-bar__left">
+            <h1 class="top-bar__title">live-scribe</h1>
+            <span class="top-bar__subtitle">real-time transcription</span>
+        </div>
+        <div class="top-bar__right">
+            <button id="btn-settings" class="icon-btn" title="Settings" aria-label="Settings">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="3"/>
+                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+                </svg>
+            </button>
+            <button id="btn-toggle" class="btn btn--primary" data-state="stopped">
+                <span class="btn__icon">&#9654;</span>
+                <span class="btn__label">Start</span>
+            </button>
+        </div>
+    </header>
+
+    <!-- Main Panels -->
+    <main class="panels">
+        <!-- Left: Transcript -->
+        <section class="panel panel--transcript">
+            <div class="panel__header">
+                <h2>Transcript</h2>
+                <span id="segment-count" class="badge">0 segments</span>
+            </div>
+            <div id="transcript" class="panel__body">
+                <div class="empty-state">Press Start to begin transcription</div>
+            </div>
+        </section>
+
+        <!-- Right: LLM Responses -->
+        <section class="panel panel--responses">
+            <div class="panel__header">
+                <h2>LLM Responses</h2>
+                <span id="response-count" class="badge">0</span>
+            </div>
+            <div id="responses" class="panel__body">
+                <div class="empty-state">Responses from Claude will appear here</div>
+            </div>
+        </section>
+    </main>
+
+    <!-- Bottom Bar -->
+    <footer class="bottom-bar">
+        <div class="bottom-bar__left">
+            <span id="status-indicator" class="status-dot status-dot--inactive"></span>
+            <span id="status-text">Idle</span>
+        </div>
+        <div class="bottom-bar__right">
+            <button id="btn-dispatch" class="btn btn--secondary" disabled>
+                Dispatch to Claude
+            </button>
+            <button id="btn-save" class="btn btn--secondary" disabled>
+                Save Transcript
+            </button>
+        </div>
+    </footer>
+
+    <!-- Settings Modal -->
+    <div id="settings-modal" class="modal" hidden>
+        <div class="modal__backdrop"></div>
+        <div class="modal__content">
+            <div class="modal__header">
+                <h2>Settings</h2>
+                <button id="btn-close-settings" class="icon-btn" aria-label="Close">
+                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"/>
+                        <line x1="6" y1="6" x2="18" y2="18"/>
+                    </svg>
+                </button>
+            </div>
+            <div class="modal__body">
+                <div class="form-group">
+                    <label for="setting-model">Whisper Model</label>
+                    <select id="setting-model">
+                        <option value="tiny">tiny</option>
+                        <option value="base" selected>base</option>
+                        <option value="small">small</option>
+                        <option value="medium">medium</option>
+                        <option value="large-v3">large-v3</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="setting-language">Language (blank = auto)</label>
+                    <input id="setting-language" type="text" placeholder="e.g. en, es, fr">
+                </div>
+                <div class="form-group">
+                    <label for="setting-interval">Dispatch Interval (seconds)</label>
+                    <input id="setting-interval" type="number" value="60" min="10" max="600">
+                </div>
+                <div class="form-group">
+                    <label for="setting-prompt">System Prompt</label>
+                    <textarea id="setting-prompt" rows="4">You are a real-time AI collaborator listening to a live audio transcription. Engage with what's being said: answer questions, provide analysis, offer relevant expertise, and surface useful context. If the speaker asks something, answer it directly. If they're discussing a design or problem, contribute meaningfully. Be concise and direct.</textarea>
+                </div>
+                <div class="form-group">
+                    <label for="setting-claude-model">Claude Model (blank = default)</label>
+                    <input id="setting-claude-model" type="text" placeholder="e.g. sonnet, opus">
+                </div>
+                <div class="form-group">
+                    <label for="setting-theme">Theme</label>
+                    <select id="setting-theme">
+                        <option value="dark" selected>Dark</option>
+                        <option value="light">Light</option>
+                    </select>
+                </div>
+            </div>
+            <div class="modal__footer">
+                <button id="btn-save-settings" class="btn btn--primary">Save Settings</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/js/websocket.js"></script>
+    <script src="/js/ui.js"></script>
+    <script src="/js/app.js"></script>
+</body>
+</html>
