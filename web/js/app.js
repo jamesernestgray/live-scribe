@@ -78,22 +78,39 @@
         });
     }
 
-    // --- Event listeners ---
-    function bindEventListeners() {
-        // Start/Stop toggle
-        document.getElementById('btn-toggle').addEventListener('click', function () {
-            if (state.recording) {
-                apiPost('/api/stop').then(function (data) {
-                    if (data.error) console.error('Stop error:', data.error);
-                });
-            } else {
-                LiveScribeUI.clearTranscript();
-                state.segments = [];
-                apiPost('/api/start', { config: state.settings }).then(function (data) {
-                    if (data.error) console.error('Start error:', data.error);
+    // --- Reusable actions ---
+    function toggleRecording() {
+        if (state.recording) {
+            apiPost('/api/stop').then(function (data) {
+                if (data.error) console.error('Stop error:', data.error);
+            });
+        } else {
+            LiveScribeUI.clearTranscript();
+            state.segments = [];
+            apiPost('/api/start', { config: state.settings }).then(function (data) {
+                if (data.error) console.error('Start error:', data.error);
+            });
+        }
+    }
+
+    function dispatch() {
+        var btn = document.getElementById('btn-dispatch');
+        if (btn.disabled) return;
+        apiPost('/api/dispatch').then(function (data) {
+            if (data.ok) {
+                LiveScribeUI.addResponse({
+                    id: data.dispatch_id,
+                    time: new Date().toLocaleTimeString('en-GB', { hour12: false }),
+                    response: '(Dispatched to LLM \u2014 awaiting response...)',
                 });
             }
         });
+    }
+
+    // --- Event listeners ---
+    function bindEventListeners() {
+        // Start/Stop toggle
+        document.getElementById('btn-toggle').addEventListener('click', toggleRecording);
 
         // Dispatch button
         document.getElementById('btn-dispatch').addEventListener('click', function () {
@@ -152,23 +169,49 @@
             var theme = document.getElementById('setting-theme').value;
             LiveScribeUI.setTheme(theme);
 
-            // Save theme preference
+            // Persist settings to localStorage
+            saveSettings();
             try { localStorage.setItem('live-scribe-theme', theme); } catch (e) { /* noop */ }
 
             LiveScribeUI.hideSettingsModal();
         });
 
-        // Keyboard shortcut: Escape closes modal
+        // Keyboard shortcuts
         document.addEventListener('keydown', function (e) {
             if (e.key === 'Escape') {
                 LiveScribeUI.hideSettingsModal();
             }
+            // Ctrl/Cmd + Enter = dispatch
+            if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+                e.preventDefault();
+                dispatch();
+            }
+            // Ctrl/Cmd + Shift + R = toggle recording
+            if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'R') {
+                e.preventDefault();
+                toggleRecording();
+            }
         });
     }
 
-    // --- Load saved settings ---
+    // --- Settings persistence ---
+    function saveSettings() {
+        try {
+            localStorage.setItem('livescribe_settings', JSON.stringify(state.settings));
+        } catch (e) { /* noop */ }
+    }
+
     function loadSettings() {
-        // Theme
+        // Restore all settings
+        try {
+            var saved = localStorage.getItem('livescribe_settings');
+            if (saved) {
+                Object.assign(state.settings, JSON.parse(saved));
+                LiveScribeUI.applySettingsToForm(state.settings);
+            }
+        } catch (e) { /* noop */ }
+
+        // Theme (backward-compatible with existing key)
         try {
             var savedTheme = localStorage.getItem('live-scribe-theme');
             if (savedTheme) {

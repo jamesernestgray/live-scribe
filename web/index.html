@@ -35,7 +35,7 @@
                 <h2>Transcript</h2>
                 <span id="segment-count" class="badge">0 segments</span>
             </div>
-            <div id="transcript" class="panel__body">
+            <div id="transcript" class="panel__body" role="log" aria-live="polite">
                 <div class="empty-state">Press Start to begin transcription</div>
             </div>
         </section>
@@ -46,7 +46,7 @@
                 <h2>LLM Responses</h2>
                 <span id="response-count" class="badge">0</span>
             </div>
-            <div id="responses" class="panel__body">
+            <div id="responses" class="panel__body" role="log" aria-live="polite">
                 <div class="empty-state">LLM responses will appear here</div>
             </div>
         </section>
@@ -55,8 +55,12 @@
     <!-- Bottom Bar -->
     <footer class="bottom-bar">
         <div class="bottom-bar__left">
-            <span id="status-indicator" class="status-dot status-dot--inactive"></span>
+            <span id="status-indicator" class="status-dot status-dot--inactive" aria-label="Recording status"></span>
             <span id="status-text">Idle</span>
+            <span class="keyboard-hints">
+                <kbd>Ctrl+Enter</kbd> Dispatch
+                <kbd>Ctrl+Shift+R</kbd> Record
+            </span>
         </div>
         <div class="bottom-bar__right">
             <button id="btn-dispatch" class="btn btn--secondary" disabled>
@@ -71,7 +75,7 @@
     <!-- Settings Modal -->
     <div id="settings-modal" class="modal" hidden>
         <div class="modal__backdrop"></div>
-        <div class="modal__content">
+        <div class="modal__content" role="dialog" aria-modal="true" aria-label="Settings">
             <div class="modal__header">
                 <h2>Settings</h2>
                 <button id="btn-close-settings" class="icon-btn" aria-label="Close">
