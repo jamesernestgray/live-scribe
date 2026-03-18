@@ -23,16 +23,25 @@ from faster_whisper import WhisperModel
 class TranscriptionBuffer:
     """Thread-safe buffer for accumulating transcription segments."""
 
-    def __init__(self):
+    def __init__(self, output_file=None):
         self._segments: list[dict] = []
         self._unsent: list[dict] = []
         self._lock = threading.Lock()
+        self._output_fh = None
+        if output_file:
+            self._output_fh = open(output_file, "a", encoding="utf-8")
 
     def add(self, text: str, timestamp: float, speaker: str | None = None):
         entry = {"text": text, "time": timestamp, "speaker": speaker}
         with self._lock:
             self._segments.append(entry)
             self._unsent.append(entry)
+        # Streaming file write (--output): append immediately and flush
+        if self._output_fh:
+            ts = datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M:%S")
+            spk = f" [{speaker}]" if speaker else ""
+            self._output_fh.write(f"[{ts}]{spk} {text}\n")
+            self._output_fh.flush()
 
     def take_unsent(self) -> list[dict]:
         """Return and clear unsent segments."""
@@ -64,6 +73,12 @@ class TranscriptionBuffer:
         with self._lock:
             return len(self._segments)
 
+    def close_output(self):
+        """Close the streaming output file handle, if any."""
+        if self._output_fh:
+            self._output_fh.close()
+            self._output_fh = None
+
 
 class AudioTranscriber:
     """Captures microphone audio and transcribes with faster-whisper."""
@@ -74,6 +89,8 @@ class AudioTranscriber:
         device: str = "cpu",
         chunk_sec: int = 5,
         diarize: bool = False,
+        language: str | None = None,
+        output_file: str | None = None,
     ):
         print(f"⏳ Loading whisper model '{model_size}' on {device}…")
         self.model = WhisperModel(model_size, device=device, compute_type="int8")
@@ -81,7 +98,8 @@ class AudioTranscriber:
         self.sample_rate = 16000
         self.chunk_sec = chunk_sec
         self.diarize = diarize
-        self.buffer = TranscriptionBuffer()
+        self.language = language
+        self.buffer = TranscriptionBuffer(output_file=output_file)
         self._running = False
         self._audio_chunks: list[np.ndarray] = []
         self._audio_lock = threading.Lock()
@@ -159,12 +177,14 @@ class AudioTranscriber:
             audio = raw.flatten().astype(np.float32)
             chunk_wall_start = time.time() - (len(audio) / self.sample_rate)
 
-            segments, _info = self.model.transcribe(
-                audio,
+            transcribe_kwargs = dict(
                 beam_size=5,
                 vad_filter=True,
                 vad_parameters=dict(min_silence_duration_ms=500),
             )
+            if self.language:
+                transcribe_kwargs["language"] = self.language
+            segments, _info = self.model.transcribe(audio, **transcribe_kwargs)
             segments = list(segments)  # consume generator before diarization
 
             if not any(s.text.strip() for s in segments):
@@ -202,11 +222,63 @@ class AudioTranscriber:
         )
         self._thread.start()
 
+    def transcribe_file(self, audio_path: str):
+        """Transcribe an audio file instead of live microphone input.
+
+        Processes the entire file, populates the buffer, then returns.
+        """
+        print(f"  Processing audio file: {audio_path}")
+        transcribe_kwargs = dict(
+            beam_size=5,
+            vad_filter=True,
+            vad_parameters=dict(min_silence_duration_ms=500),
+        )
+        if self.language:
+            transcribe_kwargs["language"] = self.language
+
+        segments, _info = self.model.transcribe(audio_path, **transcribe_kwargs)
+        segments = list(segments)
+
+        if not any(s.text.strip() for s in segments):
+            print("  (no speech detected in file)")
+            return
+
+        wall_start = time.time()
+        if self.diarize:
+            # For diarization on a file, load audio as numpy for pyannote
+            import soundfile as sf
+            audio_data, sr = sf.read(audio_path, dtype="float32")
+            if len(audio_data.shape) > 1:
+                audio_data = audio_data.mean(axis=1)  # mono
+            if sr != self.sample_rate:
+                # Resample to 16kHz for pyannote
+                import librosa
+                audio_data = librosa.resample(audio_data, orig_sr=sr, target_sr=self.sample_rate)
+            labeled = self._assign_speakers(segments, audio_data)
+            for text, speaker, seg_start, _seg_end in labeled:
+                wall_ts = wall_start + seg_start
+                spk = speaker or "?"
+                self.buffer.add(text, wall_ts, speaker=spk)
+                pretty = datetime.fromtimestamp(wall_ts).strftime("%H:%M:%S")
+                print(f"  [{pretty}] [{spk}] {text}")
+        else:
+            for seg in segments:
+                text = seg.text.strip()
+                if not text:
+                    continue
+                wall_ts = wall_start + seg.start
+                self.buffer.add(text, wall_ts)
+                pretty = datetime.fromtimestamp(wall_ts).strftime("%H:%M:%S")
+                print(f"  [{pretty}] {text}")
+
+        print(f"  File transcription complete: {len(self.buffer)} segment(s)")
+
     def stop(self):
         self._running = False
         if hasattr(self, "_stream"):
             self._stream.stop()
             self._stream.close()
+        self.buffer.close_output()
 
 
 class ClaudeDispatcher:
@@ -221,6 +293,7 @@ class ClaudeDispatcher:
         timeout: int = 120,
         context: bool = False,
         context_limit: int = 0,
+        session_log_file: str | None = None,
     ):
         self.buffer = buffer
         self.system_prompt = system_prompt
@@ -231,6 +304,9 @@ class ClaudeDispatcher:
         self.context_limit = context_limit
         self._running = False
         self._dispatch_count = 0
+        self._session_log_fh = None
+        if session_log_file:
+            self._session_log_fh = open(session_log_file, "a", encoding="utf-8")
 
     @staticmethod
     def _format_segments(segments: list[dict]) -> str:
@@ -301,6 +377,19 @@ class ClaudeDispatcher:
         if response:
             print(f"\n{response}\n")
             print(f"{'━'*60}\n")
+
+        # Session log: write both transcript and response
+        if self._session_log_fh:
+            ts_now = datetime.now().strftime("%H:%M:%S")
+            self._session_log_fh.write(
+                f"=== DISPATCH #{self._dispatch_count} at {ts_now} ===\n"
+            )
+            self._session_log_fh.write("TRANSCRIPT:\n")
+            self._session_log_fh.write(self._format_segments(new) + "\n\n")
+            self._session_log_fh.write("CLAUDE RESPONSE:\n")
+            self._session_log_fh.write((response or "(no response)") + "\n\n")
+            self._session_log_fh.flush()
+
         return True
 
     def _timer_loop(self):
@@ -318,6 +407,9 @@ class ClaudeDispatcher:
 
     def stop(self):
         self._running = False
+        if self._session_log_fh:
+            self._session_log_fh.close()
+            self._session_log_fh = None
 
 
 def save_transcript(segments: list[dict], path: Path):
@@ -342,6 +434,10 @@ examples:
   %(prog)s --model small -i 30      # better accuracy, prompt every 30s
   %(prog)s --manual --prompt "Extract action items from this meeting."
   %(prog)s --list-devices            # show mic options
+  %(prog)s -l es                     # transcribe Spanish audio
+  %(prog)s -o transcript.txt         # stream transcript to file in real-time
+  %(prog)s --audio-file meeting.wav  # transcribe a recording
+  %(prog)s --log-session session.log # save transcript + Claude responses
 """,
     )
     parser.add_argument(
@@ -405,8 +501,28 @@ examples:
         "--input-device", type=int, default=None,
         help="Audio input device index (see --list-devices)",
     )
+    parser.add_argument(
+        "--language", "-l", default=None,
+        help="Whisper language code for transcription (e.g. en, es, fr, de, ja, zh). Default: auto-detect",
+    )
+    parser.add_argument(
+        "--output", "-o", default=None,
+        help="Stream transcript to this file in real-time (append, flush after each segment)",
+    )
+    parser.add_argument(
+        "--audio-file", default=None,
+        help="Path to audio file (wav, mp3, etc.) to transcribe instead of live mic",
+    )
+    parser.add_argument(
+        "--log-session", default=None,
+        help="Log both transcript and Claude responses to this file after each dispatch",
+    )
 
     args = parser.parse_args()
+
+    # Validate --audio-file path
+    if args.audio_file and not Path(args.audio_file).is_file():
+        parser.error(f"Audio file not found: {args.audio_file}")
 
     if args.list_devices:
         print(sd.query_devices())
@@ -425,7 +541,11 @@ examples:
     print("║  Real-time transcription → Claude analysis              ║")
     print("╠══════════════════════════════════════════════════════════╣")
     diarize_label = "on (pyannote 3.1)" if args.diarize else "off"
+    lang_label = args.language if args.language else "auto-detect"
+    input_label = f"file: {args.audio_file}" if args.audio_file else "microphone"
     print(f"║  Whisper model : {args.model:<40}║")
+    print(f"║  Language      : {lang_label:<40}║")
+    print(f"║  Input         : {input_label:<40}║")
     print(f"║  Diarization   : {diarize_label:<40}║")
     context_label = (
         f"full history (last {args.context_limit})" if args.context and args.context_limit
@@ -437,6 +557,10 @@ examples:
     print(f"║  Context mode  : {context_label:<40}║")
     if args.claude_model:
         print(f"║  Claude model  : {args.claude_model:<40}║")
+    if args.output:
+        print(f"║  Streaming to  : {args.output:<40}║")
+    if args.log_session:
+        print(f"║  Session log   : {args.log_session:<40}║")
     print("╠══════════════════════════════════════════════════════════╣")
     if manual:
         print("║  Enter = send to Claude  │  Ctrl+C = stop              ║")
@@ -450,6 +574,8 @@ examples:
         device=args.compute,
         chunk_sec=args.chunk,
         diarize=args.diarize,
+        language=args.language,
+        output_file=args.output,
     )
     dispatcher = ClaudeDispatcher(
         buffer=transcriber.buffer,
@@ -458,6 +584,7 @@ examples:
         claude_model=args.claude_model,
         context=args.context,
         context_limit=args.context_limit,
+        session_log_file=args.log_session,
     )
 
     def shutdown(sig=None, frame=None):
@@ -485,6 +612,14 @@ examples:
     signal.signal(signal.SIGINT, shutdown)
     signal.signal(signal.SIGTERM, shutdown)
 
+    # ── Audio file mode: transcribe file, dispatch, then exit ──
+    if args.audio_file:
+        transcriber.transcribe_file(args.audio_file)
+        dispatcher.dispatch()
+        shutdown()
+        return
+
+    # ── Live microphone mode ──
     transcriber.start()
     dispatcher.start_timer()  # no-op in manual mode
 
