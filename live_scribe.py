@@ -7,6 +7,7 @@ and periodically sends accumulated transcription to Claude CLI for processing.
 """
 
 import argparse
+import platform
 import signal
 import subprocess
 import sys
@@ -18,6 +19,37 @@ from pathlib import Path
 import numpy as np
 import sounddevice as sd
 from faster_whisper import WhisperModel
+
+
+def find_system_audio_device() -> tuple[int, str] | None:
+    """Auto-detect a virtual audio loopback device for system audio capture.
+
+    Scans all input-capable devices for names matching known virtual audio
+    drivers (BlackHole, Soundflower, Loopback, PulseAudio monitor, etc.).
+
+    Returns (device_index, device_name) or None if no match is found.
+    """
+    devices = sd.query_devices()
+    keywords = ["blackhole", "soundflower", "loopback", "monitor", "stereo mix", "what u hear"]
+    for i, dev in enumerate(devices):
+        if dev['max_input_channels'] > 0:
+            name_lower = dev['name'].lower()
+            if any(kw in name_lower for kw in keywords):
+                return (i, dev['name'])
+    return None
+
+
+def get_system_audio_install_instructions() -> str:
+    """Return platform-specific instructions for installing a virtual audio device."""
+    system = platform.system()
+    if system == "Darwin":
+        return "Install BlackHole: brew install blackhole-2ch"
+    elif system == "Linux":
+        return "Use PulseAudio monitor: pactl list sources | grep monitor"
+    elif system == "Windows":
+        return "Enable Stereo Mix in Sound settings"
+    else:
+        return "Install a virtual audio loopback driver for your platform"
 
 
 class TranscriptionBuffer:
@@ -342,6 +374,8 @@ examples:
   %(prog)s --model small -i 30      # better accuracy, prompt every 30s
   %(prog)s --manual --prompt "Extract action items from this meeting."
   %(prog)s --list-devices            # show mic options
+  %(prog)s --system-audio            # capture desktop audio via BlackHole/etc.
+  %(prog)s --system-audio --input-device 5  # system audio with manual device
 """,
     )
     parser.add_argument(
@@ -405,6 +439,10 @@ examples:
         "--input-device", type=int, default=None,
         help="Audio input device index (see --list-devices)",
     )
+    parser.add_argument(
+        "--system-audio", action="store_true",
+        help="Capture system/desktop audio via virtual loopback device (e.g. BlackHole)",
+    )
 
     args = parser.parse_args()
 
@@ -412,8 +450,29 @@ examples:
         print(sd.query_devices())
         return
 
+    # ── System audio / input device selection ──
+    system_audio_device_name = None
     if args.input_device is not None:
+        # Explicit --input-device always wins, even with --system-audio
         sd.default.device[0] = args.input_device
+        if args.system_audio:
+            # Look up the device name for the banner
+            try:
+                dev_info = sd.query_devices(args.input_device)
+                system_audio_device_name = dev_info['name']
+            except Exception:
+                system_audio_device_name = f"device #{args.input_device}"
+    elif args.system_audio:
+        result = find_system_audio_device()
+        if result is None:
+            instructions = get_system_audio_install_instructions()
+            print(f"\n  Error: No virtual audio loopback device found.", file=sys.stderr)
+            print(f"  {instructions}\n", file=sys.stderr)
+            sys.exit(1)
+        device_index, device_name = result
+        sd.default.device[0] = device_index
+        system_audio_device_name = device_name
+        print(f"  System audio device: {device_name} (index {device_index})")
 
     manual = args.manual
     trigger_label = "Enter key (manual)" if manual else f"{args.interval}s (auto)"
@@ -435,6 +494,8 @@ examples:
     print(f"║  Chunk size    : {args.chunk}s{' '*(39-len(str(args.chunk)))}║")
     print(f"║  Claude trigger: {trigger_label:<40}║")
     print(f"║  Context mode  : {context_label:<40}║")
+    if system_audio_device_name:
+        print(f"║  Audio source  : {system_audio_device_name:<40}║")
     if args.claude_model:
         print(f"║  Claude model  : {args.claude_model:<40}║")
     print("╠══════════════════════════════════════════════════════════╣")
