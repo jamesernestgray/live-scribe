@@ -211,8 +211,8 @@ class TestSessionLog:
                 session_log_file=log_path,
             )
 
-            # Mock _call_claude to return a known response
-            with mock.patch.object(dispatcher, "_call_claude", return_value="Analysis: all good"):
+            # Mock provider.send to return a known response
+            with mock.patch.object(dispatcher.provider, "send", return_value="Analysis: all good"):
                 dispatcher.dispatch()
 
             dispatcher.stop()
@@ -224,7 +224,7 @@ class TestSessionLog:
             assert "TRANSCRIPT:" in content
             assert "Hello world" in content
             assert "How are you" in content
-            assert "CLAUDE RESPONSE:" in content
+            assert "LLM RESPONSE:" in content
             assert "Analysis: all good" in content
         finally:
             os.unlink(log_path)
@@ -240,11 +240,11 @@ class TestSessionLog:
                 session_log_file=log_path,
             )
 
-            with mock.patch.object(dispatcher, "_call_claude", return_value="Response 1"):
+            with mock.patch.object(dispatcher.provider, "send", return_value="Response 1"):
                 buf.add("Segment 1", time.time())
                 dispatcher.dispatch()
 
-            with mock.patch.object(dispatcher, "_call_claude", return_value="Response 2"):
+            with mock.patch.object(dispatcher.provider, "send", return_value="Response 2"):
                 buf.add("Segment 2", time.time())
                 dispatcher.dispatch()
 
@@ -271,7 +271,7 @@ class TestSessionLog:
                 session_log_file=log_path,
             )
 
-            with mock.patch.object(dispatcher, "_call_claude", return_value=None):
+            with mock.patch.object(dispatcher.provider, "send", return_value=None):
                 dispatcher.dispatch()
 
             dispatcher.stop()
@@ -289,7 +289,7 @@ class TestSessionLog:
             buffer=buf,
             system_prompt="Test prompt",
         )
-        with mock.patch.object(dispatcher, "_call_claude", return_value="OK"):
+        with mock.patch.object(dispatcher.provider, "send", return_value="OK"):
             result = dispatcher.dispatch()
         assert result is True
         dispatcher.stop()

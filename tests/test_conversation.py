@@ -43,7 +43,7 @@ class TestHistoryAccumulation:
         d = _make_dispatcher()
         d.buffer.add("Hello world", time.time())
 
-        with patch.object(d, "_call_claude", return_value="Response 1"):
+        with patch.object(d.provider, "send", return_value="Response 1"):
             d.dispatch()
 
         assert len(d._history) == 1
@@ -54,15 +54,15 @@ class TestHistoryAccumulation:
         d = _make_dispatcher()
 
         d.buffer.add("First batch", time.time())
-        with patch.object(d, "_call_claude", return_value="Resp 1"):
+        with patch.object(d.provider, "send", return_value="Resp 1"):
             d.dispatch()
 
         d.buffer.add("Second batch", time.time() + 1)
-        with patch.object(d, "_call_claude", return_value="Resp 2"):
+        with patch.object(d.provider, "send", return_value="Resp 2"):
             d.dispatch()
 
         d.buffer.add("Third batch", time.time() + 2)
-        with patch.object(d, "_call_claude", return_value="Resp 3"):
+        with patch.object(d.provider, "send", return_value="Resp 3"):
             d.dispatch()
 
         assert len(d._history) == 3
@@ -74,7 +74,7 @@ class TestHistoryAccumulation:
         d = _make_dispatcher(conversation=False)
         d.buffer.add("Hello", time.time())
 
-        with patch.object(d, "_call_claude", return_value="Response"):
+        with patch.object(d.provider, "send", return_value="Response"):
             d.dispatch()
 
         assert d._history == []
@@ -83,7 +83,7 @@ class TestHistoryAccumulation:
         d = _make_dispatcher()
         d.buffer.add("Hello", time.time())
 
-        with patch.object(d, "_call_claude", return_value=None):
+        with patch.object(d.provider, "send", return_value=None):
             d.dispatch()
 
         assert d._history == []
@@ -265,7 +265,7 @@ class TestDispatchFlow:
             prompts_sent.append(prompt)
             return f"Response {len(prompts_sent)}"
 
-        with patch.object(d, "_call_claude", side_effect=capture_prompt):
+        with patch.object(d.provider, "send", side_effect=capture_prompt):
             d.buffer.add("Turn 1 text", time.time())
             d.dispatch()
 
@@ -294,7 +294,7 @@ class TestDispatchFlow:
         d = _make_dispatcher()
         d.buffer.add("Something", time.time())
 
-        with patch.object(d, "_call_claude", return_value="Ok"):
+        with patch.object(d.provider, "send", return_value="Ok"):
             assert d.dispatch() is True
 
 

@@ -1,7 +1,5 @@
-"""Tests for the --stream flag and _call_claude_streaming() method."""
+"""Tests for the --stream flag and provider-based streaming in LLMDispatcher."""
 
-import io
-import subprocess
 import sys
 import time
 from unittest import mock
@@ -13,165 +11,93 @@ sys.modules["numpy"] = mock.MagicMock()
 sys.modules["sounddevice"] = mock.MagicMock()
 sys.modules["faster_whisper"] = mock.MagicMock()
 
-from live_scribe import ClaudeDispatcher, TranscriptionBuffer  # noqa: E402
+from live_scribe import ClaudeDispatcher, LLMDispatcher, TranscriptionBuffer  # noqa: E402
 
 
 # ── Helpers ──────────────────────────────────────────────────────────
 
 
-def _make_dispatcher(stream: bool = False, timeout: int = 120, claude_model: str | None = None) -> ClaudeDispatcher:
+def _make_dispatcher(stream: bool = False, timeout: int = 120) -> LLMDispatcher:
     buf = TranscriptionBuffer()
     buf.add("Hello world", time.time())
-    return ClaudeDispatcher(
+    return LLMDispatcher(
         buffer=buf,
         system_prompt="Test prompt",
         stream=stream,
         timeout=timeout,
-        claude_model=claude_model,
     )
-
-
-class FakePopen:
-    """Simulate subprocess.Popen with controllable stdout/stderr."""
-
-    def __init__(self, stdout_text: str = "", returncode: int = 0, stderr_text: str = ""):
-        self.stdout = io.StringIO(stdout_text)
-        self.stderr = io.StringIO(stderr_text)
-        self.returncode = returncode
-        self._killed = False
-
-    def wait(self, timeout=None):
-        pass
-
-    def kill(self):
-        self._killed = True
-
-
-class FakePopenTimeout(FakePopen):
-    """Simulate a Popen whose wait() raises TimeoutExpired."""
-
-    def wait(self, timeout=None):
-        raise subprocess.TimeoutExpired(cmd="claude", timeout=timeout or 120)
 
 
 # ── Tests ────────────────────────────────────────────────────────────
 
 
-class TestCallClaudeStreaming:
-    """Test _call_claude_streaming() directly."""
-
-    def test_captures_full_response(self, capsys):
-        """Streaming should print each character AND return the full response."""
-        fake = FakePopen(stdout_text="Hello from Claude!", returncode=0)
-
-        with mock.patch("subprocess.Popen", return_value=fake):
-            d = _make_dispatcher(stream=True)
-            result = d._call_claude_streaming("test prompt")
-
-        assert result == "Hello from Claude!"
-        captured = capsys.readouterr()
-        assert "Hello from Claude!" in captured.out
-
-    def test_returns_none_on_nonzero_exit(self, capsys):
-        """Non-zero exit code should return None and print warning."""
-        fake = FakePopen(stdout_text="partial", returncode=1, stderr_text="some error")
-
-        with mock.patch("subprocess.Popen", return_value=fake):
-            d = _make_dispatcher(stream=True)
-            result = d._call_claude_streaming("test prompt")
-
-        assert result is None
-        captured = capsys.readouterr()
-        assert "claude exited 1" in captured.err
-
-    def test_timeout_kills_process(self, capsys):
-        """TimeoutExpired should kill the process and return None."""
-        fake = FakePopenTimeout(stdout_text="partial output")
-
-        with mock.patch("subprocess.Popen", return_value=fake):
-            d = _make_dispatcher(stream=True, timeout=5)
-            result = d._call_claude_streaming("test prompt")
-
-        assert result is None
-        assert fake._killed is True
-        captured = capsys.readouterr()
-        assert "timed out" in captured.err
-
-    def test_file_not_found(self, capsys):
-        """Missing claude binary should return None and print warning."""
-        with mock.patch("subprocess.Popen", side_effect=FileNotFoundError):
-            d = _make_dispatcher(stream=True)
-            result = d._call_claude_streaming("test prompt")
-
-        assert result is None
-        captured = capsys.readouterr()
-        assert "'claude' not found" in captured.err
-
-    def test_strips_whitespace(self):
-        """Returned response should be stripped of leading/trailing whitespace."""
-        fake = FakePopen(stdout_text="  spaced out  \n", returncode=0)
-
-        with mock.patch("subprocess.Popen", return_value=fake):
-            d = _make_dispatcher(stream=True)
-            result = d._call_claude_streaming("test prompt")
-
-        assert result == "spaced out"
-
-    def test_passes_model_flag(self):
-        """When claude_model is set, --model flag should appear in the command."""
-        fake = FakePopen(stdout_text="ok", returncode=0)
-
-        with mock.patch("subprocess.Popen", return_value=fake) as mock_popen:
-            d = _make_dispatcher(stream=True, claude_model="opus")
-            d._call_claude_streaming("test prompt")
-
-        cmd = mock_popen.call_args[0][0]
-        assert "--model" in cmd
-        assert "opus" in cmd
-
-    def test_empty_stdout(self):
-        """Empty stdout should return None (stripped empty string is falsy -> but strip returns '')."""
-        fake = FakePopen(stdout_text="", returncode=0)
-
-        with mock.patch("subprocess.Popen", return_value=fake):
-            d = _make_dispatcher(stream=True)
-            result = d._call_claude_streaming("test prompt")
-
-        # Empty string stripped is still "", which the method returns
-        # (returncode == 0 path returns ''.strip() == '')
-        assert result == ""
-
-
-class TestDispatchStreaming:
-    """Test that dispatch() routes to the streaming method when stream=True."""
+class TestProviderStreaming:
+    """Test that dispatch() uses provider.send_streaming() when stream=True."""
 
     def test_dispatch_uses_streaming_when_enabled(self, capsys):
-        """With stream=True, dispatch() should call _call_claude_streaming."""
+        """With stream=True, dispatch() should call provider.send_streaming."""
         d = _make_dispatcher(stream=True)
 
-        with mock.patch.object(d, "_call_claude_streaming", return_value="streamed!") as mock_stream:
-            with mock.patch.object(d, "_call_claude") as mock_regular:
+        with mock.patch.object(d.provider, "send_streaming", return_value=iter(["Hello ", "world!"])) as mock_stream:
+            with mock.patch.object(d.provider, "send") as mock_regular:
                 d.dispatch()
 
         mock_stream.assert_called_once()
         mock_regular.assert_not_called()
 
     def test_dispatch_uses_regular_when_disabled(self, capsys):
-        """With stream=False, dispatch() should call _call_claude."""
+        """With stream=False, dispatch() should call provider.send."""
         d = _make_dispatcher(stream=False)
 
-        with mock.patch.object(d, "_call_claude", return_value="regular!") as mock_regular:
-            with mock.patch.object(d, "_call_claude_streaming") as mock_stream:
+        with mock.patch.object(d.provider, "send", return_value="regular!") as mock_regular:
+            with mock.patch.object(d.provider, "send_streaming") as mock_stream:
                 d.dispatch()
 
         mock_regular.assert_called_once()
         mock_stream.assert_not_called()
 
+    def test_streaming_captures_full_response(self, capsys):
+        """Streaming should print each chunk AND track the full response."""
+        d = _make_dispatcher(stream=True)
+        d.conversation = True  # enable to check response is captured
+
+        chunks = ["Hello", " from", " streaming!"]
+        with mock.patch.object(d.provider, "send_streaming", return_value=iter(chunks)):
+            d.dispatch()
+
+        # Verify response was captured in conversation history
+        assert len(d._history) == 1
+        assert d._history[0]["response"] == "Hello from streaming!"
+
+        # Verify output was printed
+        captured = capsys.readouterr()
+        assert "Hello from streaming!" in captured.out
+
+    def test_streaming_empty_response(self):
+        """Empty streaming response should result in no conversation history entry."""
+        d = _make_dispatcher(stream=True)
+        d.conversation = True
+
+        with mock.patch.object(d.provider, "send_streaming", return_value=iter([])):
+            d.dispatch()
+
+        assert len(d._history) == 0
+
+    def test_streaming_whitespace_only_response(self):
+        """Whitespace-only streaming response should be treated as None."""
+        d = _make_dispatcher(stream=True)
+        d.conversation = True
+
+        with mock.patch.object(d.provider, "send_streaming", return_value=iter(["  ", "\n"])):
+            d.dispatch()
+
+        assert len(d._history) == 0
+
     def test_dispatch_returns_true_with_data(self):
         """dispatch() should return True when there are segments to send."""
         d = _make_dispatcher(stream=True)
 
-        with mock.patch.object(d, "_call_claude_streaming", return_value="ok"):
+        with mock.patch.object(d.provider, "send_streaming", return_value=iter(["ok"])):
             result = d.dispatch()
 
         assert result is True
@@ -179,7 +105,7 @@ class TestDispatchStreaming:
     def test_dispatch_returns_false_when_empty(self):
         """dispatch() should return False when buffer is empty."""
         buf = TranscriptionBuffer()  # empty
-        d = ClaudeDispatcher(buffer=buf, system_prompt="test", stream=True)
+        d = LLMDispatcher(buffer=buf, system_prompt="test", stream=True)
         result = d.dispatch()
         assert result is False
 
@@ -207,14 +133,22 @@ class TestStreamArgParsing:
 
 
 class TestStreamInitParam:
-    """Test that ClaudeDispatcher stores the stream parameter."""
+    """Test that LLMDispatcher stores the stream parameter."""
 
     def test_stream_defaults_false(self):
         buf = TranscriptionBuffer()
-        d = ClaudeDispatcher(buffer=buf, system_prompt="test")
+        d = LLMDispatcher(buffer=buf, system_prompt="test")
         assert d.stream is False
 
     def test_stream_set_true(self):
         buf = TranscriptionBuffer()
+        d = LLMDispatcher(buffer=buf, system_prompt="test", stream=True)
+        assert d.stream is True
+
+    def test_claude_dispatcher_alias_works(self):
+        """ClaudeDispatcher should be an alias for LLMDispatcher."""
+        assert ClaudeDispatcher is LLMDispatcher
+        buf = TranscriptionBuffer()
         d = ClaudeDispatcher(buffer=buf, system_prompt="test", stream=True)
         assert d.stream is True
+        assert isinstance(d, LLMDispatcher)
