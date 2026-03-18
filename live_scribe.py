@@ -637,6 +637,10 @@ examples:
         "--port", type=int, default=8765,
         help="Port for the web UI server (default: 8765)",
     )
+    parser.add_argument(
+        "--host", default="127.0.0.1",
+        help="Host for the web UI server (default: 127.0.0.1)",
+    )
 
     args = parser.parse_args()
 
@@ -651,14 +655,22 @@ examples:
     # ── Web UI mode ──
     if args.web:
         from web_server import start_web_server
+
+        host = getattr(args, "host", "127.0.0.1")
         start_web_server(
+            host=host,
             port=args.port,
             model=args.model,
             prompt=args.prompt,
             interval=args.interval,
             context=args.context,
             context_limit=args.context_limit,
-            claude_model=args.claude_model,
+            llm=args.llm,
+            llm_model=llm_model,
+            stream=args.stream,
+            conversation=args.conversation,
+            diarize=args.diarize,
+            language=args.language,
         )
         return
 
