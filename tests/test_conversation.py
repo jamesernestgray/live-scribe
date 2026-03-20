@@ -286,16 +286,16 @@ class TestDispatchFlow:
         assert "YOUR RESPONSE: Response 1" in prompts_sent[2]
         assert "YOUR RESPONSE: Response 2" in prompts_sent[2]
 
-    def test_dispatch_returns_false_when_nothing_to_send(self):
+    def test_dispatch_returns_none_when_nothing_to_send(self):
         d = _make_dispatcher()
-        assert d.dispatch() is False
+        assert d.dispatch() is None
 
-    def test_dispatch_returns_true_when_sent(self):
+    def test_dispatch_returns_response_when_sent(self):
         d = _make_dispatcher()
         d.buffer.add("Something", time.time())
 
         with patch.object(d.provider, "send", return_value="Ok"):
-            assert d.dispatch() is True
+            assert d.dispatch() == "Ok"
 
 
 # ── Argument parsing ──

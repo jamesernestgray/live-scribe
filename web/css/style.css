@@ -502,6 +502,30 @@ body {
     resize: vertical;
 }
 
+.form-group--toggle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-direction: row;
+}
+
+.form-group--toggle label {
+    margin-bottom: 0;
+}
+
+.form-group--toggle input[type="checkbox"] {
+    width: auto;
+    accent-color: var(--accent);
+    width: 18px;
+    height: 18px;
+    cursor: pointer;
+}
+
+.form-divider {
+    border-top: 1px solid var(--border);
+    margin: 16px 0;
+}
+
 /* ---------- Scrollbar ---------- */
 
 .panel__body::-webkit-scrollbar {

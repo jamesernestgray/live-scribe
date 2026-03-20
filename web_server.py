@@ -298,16 +298,14 @@ async def api_dispatch():
     loop = _event_loop or asyncio.get_running_loop()
 
     def _run():
-        result = _dispatcher.dispatch()
-        if result:
-            resp = {
-                "id": did,
-                "time": datetime.now().strftime("%H:%M:%S"),
-                "response": result if isinstance(result, str) else "(Dispatch completed)",
-            }
-            _dispatch_responses.append(resp)
-            # Broadcast the response to all WebSocket clients
-            asyncio.run_coroutine_threadsafe(_broadcast_response(did, resp), loop)
+        response_text = _dispatcher.dispatch()
+        resp = {
+            "id": did,
+            "time": datetime.now().strftime("%H:%M:%S"),
+            "response": response_text or "(No response from LLM)",
+        }
+        _dispatch_responses.append(resp)
+        asyncio.run_coroutine_threadsafe(_broadcast_response(did, resp), loop)
 
     thread = threading.Thread(target=_run, daemon=True)
     thread.start()

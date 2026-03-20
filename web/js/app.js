@@ -19,7 +19,13 @@
                 + 'If they\'re discussing a design or problem, contribute meaningfully. '
                 + 'Be concise and direct.',
             interval: 60,
+            llm: 'claude-cli',
             llm_model: null,
+            diarize: false,
+            context: false,
+            context_limit: 0,
+            stream: false,
+            conversation: false,
         },
     };
 
@@ -119,7 +125,8 @@
                     LiveScribeUI.addResponse({
                         id: data.dispatch_id,
                         time: new Date().toLocaleTimeString('en-GB', { hour12: false }),
-                        response: '(Dispatched to LLM \u2014 awaiting response...)',
+                        response: 'Awaiting response\u2026',
+                        pending: true,
                     });
                 }
             });
@@ -174,6 +181,11 @@
             try { localStorage.setItem('live-scribe-theme', theme); } catch (e) { /* noop */ }
 
             LiveScribeUI.hideSettingsModal();
+        });
+
+        // Context checkbox toggles context-limit visibility
+        document.getElementById('setting-context').addEventListener('change', function () {
+            LiveScribeUI.toggleContextLimit();
         });
 
         // Keyboard shortcuts

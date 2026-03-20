@@ -269,7 +269,7 @@ class TestSessionLog:
         )
         with mock.patch.object(dispatcher.provider, "send", return_value="OK"):
             result = dispatcher.dispatch()
-        assert result is True
+        assert result == "OK"
         dispatcher.stop()
 
 
@@ -326,10 +326,10 @@ class TestBufferWithSpeakers:
 class TestEdgeCases:
     """Test argument edge cases and combinations."""
 
-    def test_dispatch_with_nothing_returns_false(self):
+    def test_dispatch_with_nothing_returns_none(self):
         buf = TranscriptionBuffer()
         dispatcher = ClaudeDispatcher(buffer=buf, system_prompt="test")
-        assert dispatcher.dispatch() is False
+        assert dispatcher.dispatch() is None
         dispatcher.stop()
 
     def test_buffer_close_output_idempotent(self):

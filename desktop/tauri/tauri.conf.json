@@ -60,21 +60,13 @@
       }
     },
     "resources": [
-      "../../../live_scribe.py",
-      "../../../requirements.txt"
+      "../../live_scribe.py",
+      "../../requirements.txt"
     ]
   },
   "plugins": {
     "shell": {
-      "open": true,
-      "scope": [
-        {
-          "name": "python-backend",
-          "cmd": "python3",
-          "args": true
-        }
-      ]
-    },
-    "global-shortcut": {}
+      "open": true
+    }
   }
 }

@@ -109,9 +109,45 @@
                     <textarea id="setting-prompt" rows="4">You are a real-time AI collaborator listening to a live audio transcription. Engage with what's being said: answer questions, provide analysis, offer relevant expertise, and surface useful context. If the speaker asks something, answer it directly. If they're discussing a design or problem, contribute meaningfully. Be concise and direct.</textarea>
                 </div>
                 <div class="form-group">
+                    <label for="setting-llm">LLM Provider</label>
+                    <select id="setting-llm">
+                        <option value="claude-cli" selected>Claude CLI</option>
+                        <option value="anthropic">Anthropic API</option>
+                        <option value="openai">OpenAI</option>
+                        <option value="gemini">Gemini</option>
+                        <option value="litellm">LiteLLM</option>
+                    </select>
+                </div>
+                <div class="form-group">
                     <label for="setting-llm-model">LLM Model (blank = default)</label>
                     <input id="setting-llm-model" type="text" placeholder="e.g. sonnet, gpt-4o">
                 </div>
+
+                <div class="form-divider"></div>
+
+                <div class="form-group form-group--toggle">
+                    <label for="setting-diarize">Speaker Diarization</label>
+                    <input id="setting-diarize" type="checkbox">
+                </div>
+                <div class="form-group form-group--toggle">
+                    <label for="setting-context">Send Full Context</label>
+                    <input id="setting-context" type="checkbox">
+                </div>
+                <div class="form-group" id="context-limit-group" hidden>
+                    <label for="setting-context-limit">Context Limit (0 = unlimited)</label>
+                    <input id="setting-context-limit" type="number" value="0" min="0" max="1000">
+                </div>
+                <div class="form-group form-group--toggle">
+                    <label for="setting-stream">Stream Responses</label>
+                    <input id="setting-stream" type="checkbox">
+                </div>
+                <div class="form-group form-group--toggle">
+                    <label for="setting-conversation">Conversation Mode</label>
+                    <input id="setting-conversation" type="checkbox">
+                </div>
+
+                <div class="form-divider"></div>
+
                 <div class="form-group">
                     <label for="setting-theme">Theme</label>
                     <select id="setting-theme">

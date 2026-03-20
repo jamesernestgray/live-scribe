@@ -81,8 +81,19 @@ var LiveScribeUI = (function () {
         var emptyState = container.querySelector('.empty-state');
         if (emptyState) emptyState.remove();
 
+        // If a placeholder for this dispatch ID already exists, update it
+        var existing = response.id ? container.querySelector('[data-dispatch-id="' + response.id + '"]') : null;
+        if (existing) {
+            existing.querySelector('.response__time').textContent = response.time || '';
+            existing.querySelector('.response__text').textContent = response.response || '';
+            existing.classList.remove('response--pending');
+            container.scrollTop = container.scrollHeight;
+            return;
+        }
+
         var div = document.createElement('div');
         div.className = 'response';
+        if (response.id) div.dataset.dispatchId = response.id;
 
         var header = document.createElement('div');
         header.className = 'response__header';
@@ -103,6 +114,11 @@ var LiveScribeUI = (function () {
         text.className = 'response__text';
         text.textContent = response.response || '';
         div.appendChild(text);
+
+        // Mark as pending if it's a placeholder
+        if (response.pending) {
+            div.classList.add('response--pending');
+        }
 
         container.appendChild(div);
         container.scrollTop = container.scrollHeight;
@@ -163,7 +179,13 @@ var LiveScribeUI = (function () {
             language: document.getElementById('setting-language').value || null,
             interval: parseInt(document.getElementById('setting-interval').value, 10) || 60,
             prompt: document.getElementById('setting-prompt').value,
+            llm: document.getElementById('setting-llm').value,
             llm_model: document.getElementById('setting-llm-model').value || null,
+            diarize: document.getElementById('setting-diarize').checked,
+            context: document.getElementById('setting-context').checked,
+            context_limit: parseInt(document.getElementById('setting-context-limit').value, 10) || 0,
+            stream: document.getElementById('setting-stream').checked,
+            conversation: document.getElementById('setting-conversation').checked,
         };
     }
 
@@ -172,7 +194,19 @@ var LiveScribeUI = (function () {
         if (settings.language) document.getElementById('setting-language').value = settings.language;
         if (settings.interval) document.getElementById('setting-interval').value = settings.interval;
         if (settings.prompt) document.getElementById('setting-prompt').value = settings.prompt;
+        if (settings.llm) document.getElementById('setting-llm').value = settings.llm;
         if (settings.llm_model) document.getElementById('setting-llm-model').value = settings.llm_model;
+        document.getElementById('setting-diarize').checked = !!settings.diarize;
+        document.getElementById('setting-context').checked = !!settings.context;
+        document.getElementById('setting-context-limit').value = settings.context_limit || 0;
+        document.getElementById('setting-stream').checked = !!settings.stream;
+        document.getElementById('setting-conversation').checked = !!settings.conversation;
+        _toggleContextLimit();
+    }
+
+    function _toggleContextLimit() {
+        var show = document.getElementById('setting-context').checked;
+        document.getElementById('context-limit-group').hidden = !show;
     }
 
     function setTheme(theme) {
@@ -197,5 +231,6 @@ var LiveScribeUI = (function () {
         applySettingsToForm: applySettingsToForm,
         setTheme: setTheme,
         clearTranscript: clearTranscript,
+        toggleContextLimit: _toggleContextLimit,
     };
 })();

@@ -136,7 +136,7 @@ class TestDispatchWithContextEndToEnd:
 
         with patch.object(d.provider, "send", side_effect=capture):
             result = d.dispatch()
-        assert result is True
+        assert result is not None
 
         # First dispatch has no prior context
         assert "--- PRIOR CONTEXT ---" not in prompts_sent[0]
@@ -152,7 +152,7 @@ class TestDispatchWithContextEndToEnd:
 
         with patch.object(d.provider, "send", side_effect=capture2):
             result = d.dispatch()
-        assert result is True
+        assert result is not None
 
         assert "--- PRIOR CONTEXT ---" in prompts_sent[1]
         assert "segment one" in prompts_sent[1]
@@ -212,7 +212,7 @@ class TestDispatchWithContextEndToEnd:
             with patch.object(d.provider, "send_streaming", return_value=iter(["Stream ", "response"])):
                 result = d.dispatch()
 
-            assert result is True
+            assert result is not None
             assert len(d._history) == 1
             assert d._history[0]["response"] == "Stream response"
 

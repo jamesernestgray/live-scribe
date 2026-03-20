@@ -1,15 +1,62 @@
 // Prevents an additional console window on Windows in release.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use live_scribe::{
-    dispatch, get_status, start_recording, stop_recording, AppState,
-    start_python_backend, stop_python_backend,
-};
+use live_scribe::{AppState, StatusResponse, start_python_backend, stop_python_backend};
 use tauri::{
     menu::{Menu, MenuItem},
     tray::TrayIconBuilder,
-    Manager,
+    Emitter, Manager, State,
 };
+
+// ── Tauri Commands ──────────────────────────────────────────────────────
+
+#[tauri::command]
+fn start_recording(state: State<'_, AppState>) -> Result<String, String> {
+    let mut recording = state.is_recording.lock().map_err(|e| e.to_string())?;
+
+    if *recording {
+        return Ok("Already recording".to_string());
+    }
+
+    *recording = true;
+    Ok("Recording started".to_string())
+}
+
+#[tauri::command]
+fn stop_recording(state: State<'_, AppState>) -> Result<String, String> {
+    let mut recording = state.is_recording.lock().map_err(|e| e.to_string())?;
+
+    if !*recording {
+        return Ok("Not recording".to_string());
+    }
+
+    *recording = false;
+    Ok("Recording stopped".to_string())
+}
+
+#[tauri::command]
+fn dispatch(state: State<'_, AppState>) -> Result<String, String> {
+    let recording = state.is_recording.lock().map_err(|e| e.to_string())?;
+
+    if !*recording {
+        return Err("Not recording — nothing to dispatch".to_string());
+    }
+
+    Ok("Dispatch requested".to_string())
+}
+
+#[tauri::command]
+fn get_status(state: State<'_, AppState>) -> Result<StatusResponse, String> {
+    let recording = state.is_recording.lock().map_err(|e| e.to_string())?;
+    let proc = state.python_process.lock().map_err(|e| e.to_string())?;
+
+    Ok(StatusResponse {
+        recording: *recording,
+        backend_running: proc.is_some(),
+    })
+}
+
+// ── Main ────────────────────────────────────────────────────────────────
 
 fn main() {
     tauri::Builder::default()
@@ -47,7 +94,6 @@ fn main() {
                             let _ = stop_recording_internal(&state);
                         }
                         "dispatch" => {
-                            // Emit an event to the frontend to trigger dispatch
                             let _ = app_handle.emit("dispatch-requested", ());
                         }
                         "quit" => {
@@ -60,33 +106,24 @@ fn main() {
                 .build(app)?;
 
             // ── Global shortcuts ────────────────────────────────────
-            // Cmd+Shift+D (macOS) / Ctrl+Shift+D (Windows/Linux) for dispatch
             use tauri_plugin_global_shortcut::GlobalShortcutExt;
             let app_handle_shortcut = app_handle.clone();
             app_handle.global_shortcut().on_shortcut(
                 {
                     #[cfg(target_os = "macos")]
-                    { "CommandOrControl+Shift+D".parse().unwrap() }
+                    { "CommandOrControl+Shift+D".parse::<tauri_plugin_global_shortcut::Shortcut>().unwrap() }
                     #[cfg(not(target_os = "macos"))]
-                    { "Ctrl+Shift+D".parse().unwrap() }
+                    { "Ctrl+Shift+D".parse::<tauri_plugin_global_shortcut::Shortcut>().unwrap() }
                 },
                 move |_app, _shortcut, _event| {
                     let _ = app_handle_shortcut.emit("dispatch-requested", ());
                 },
             )?;
 
-            // ── Wait for backend, then navigate to it ───────────────
-            // Give the Python server a moment to start up.
-            // The window URL is already set to http://localhost:8765 in
-            // tauri.conf.json, so the webview will load it automatically.
-            // If the backend isn't ready yet, the frontend placeholder
-            // will show a loading state and retry.
-
             Ok(())
         })
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {
-                // Clean up the Python backend when the window is closed
                 let state = window.state::<AppState>();
                 let _ = stop_python_backend(state.inner());
             }

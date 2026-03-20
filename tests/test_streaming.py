@@ -87,21 +87,21 @@ class TestProviderStreaming:
 
         assert len(d._history) == 0
 
-    def test_dispatch_returns_true_with_data(self):
-        """dispatch() should return True when there are segments to send."""
+    def test_dispatch_returns_response_with_data(self):
+        """dispatch() should return the response text when there are segments."""
         d = _make_dispatcher(stream=True)
 
         with mock.patch.object(d.provider, "send_streaming", return_value=iter(["ok"])):
             result = d.dispatch()
 
-        assert result is True
+        assert result == "ok"
 
-    def test_dispatch_returns_false_when_empty(self):
-        """dispatch() should return False when buffer is empty."""
+    def test_dispatch_returns_none_when_empty(self):
+        """dispatch() should return None when buffer is empty."""
         buf = TranscriptionBuffer()  # empty
         d = LLMDispatcher(buffer=buf, system_prompt="test", stream=True)
         result = d.dispatch()
-        assert result is False
+        assert result is None
 
 
 class TestStreamArgParsing:

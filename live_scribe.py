@@ -547,24 +547,24 @@ class LLMDispatcher:
 
         return "\n".join(parts)
 
-    def dispatch(self) -> bool:
-        """Send unsent transcript to the LLM. Returns True if anything was sent."""
+    def dispatch(self) -> str | None:
+        """Send unsent transcript to the LLM. Returns the response text, or None."""
         with self._dispatch_lock:
             return self._dispatch_unlocked()
 
-    def _dispatch_unlocked(self) -> bool:
+    def _dispatch_unlocked(self) -> str | None:
         """Internal dispatch implementation (must be called with _dispatch_lock held)."""
         if self.context:
             prior, new = self.buffer.take_with_context(self.context_limit)
             if not new:
                 print("  (nothing new to send)")
-                return False
+                return None
             prompt = self._build_prompt(prior, new)
         else:
             new = self.buffer.take_unsent()
             if not new:
                 print("  (nothing new to send)")
-                return False
+                return None
             prompt = self._build_prompt([], new)
 
         self._dispatch_count += 1
@@ -613,7 +613,7 @@ class LLMDispatcher:
             self._session_log_fh.write((response or "(no response)") + "\n\n")
             self._session_log_fh.flush()
 
-        return True
+        return response
 
     def _timer_loop(self):
         while self._running:
