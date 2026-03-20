@@ -13,12 +13,20 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, JSONResponse
+import sounddevice as sd
+from fastapi import FastAPI, Query, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from live_scribe import AudioTranscriber, LLMDispatcher, TranscriptionBuffer
+from live_scribe import (
+    AudioTranscriber,
+    DEFAULT_PRESET,
+    LLMDispatcher,
+    TranscriptionBuffer,
+    get_all_presets,
+    save_transcript,
+)
 
 # ---------------------------------------------------------------------------
 # App globals (populated by start_web_server or create_app)
@@ -67,6 +75,8 @@ _settings: dict = {
     "stream": False,
     "conversation": False,
     "diarize": False,
+    "input_device": None,
+    "compute": "cpu",
 }
 
 # Connected WebSocket clients
@@ -97,6 +107,8 @@ class StartConfig(BaseModel):
     stream: bool | None = None
     conversation: bool | None = None
     diarize: bool | None = None
+    input_device: int | None = None
+    compute: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -223,6 +235,67 @@ async def api_transcript():
     })
 
 
+@app.get("/api/transcript/export")
+async def api_transcript_export(format: str = Query("txt", pattern="^(txt|md|json|srt)$")):
+    """Export transcript in the specified format as a file download."""
+    import tempfile
+
+    segments = _buffer.all() if _buffer else []
+
+    # Content-type and file extension mapping
+    content_types = {
+        "txt": "text/plain",
+        "md": "text/markdown",
+        "json": "application/json",
+        "srt": "text/srt",
+    }
+
+    # Write to a temporary file using the existing save_transcript logic
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    filename = f"transcript-{timestamp}.{format}"
+
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=f".{format}", delete=False
+    ) as tmp:
+        tmp_path = Path(tmp.name)
+
+    try:
+        save_transcript(
+            segments, tmp_path, fmt=format,
+            dispatches=_dispatch_responses or None,
+            model=_settings.get("model", "base"),
+            language=_settings.get("language"),
+            provider=_settings.get("llm", "claude-cli"),
+        )
+        content = tmp_path.read_text(encoding="utf-8")
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+    return Response(
+        content=content,
+        media_type=content_types.get(format, "text/plain"),
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+        },
+    )
+
+
+@app.get("/api/devices")
+async def api_devices():
+    """List available audio input devices."""
+    devices = sd.query_devices()
+    input_devices = []
+    for i, dev in enumerate(devices):
+        if dev["max_input_channels"] > 0:
+            input_devices.append({
+                "index": i,
+                "name": dev["name"],
+                "channels": dev["max_input_channels"],
+                "default": i == sd.default.device[0],
+            })
+    return JSONResponse({"devices": input_devices})
+
+
 @app.post("/api/start")
 async def api_start(config: StartConfig | None = None):
     global _transcriber, _dispatcher, _buffer, _recording, _last_segment_count
@@ -237,10 +310,17 @@ async def api_start(config: StartConfig | None = None):
     _buffer = TranscriptionBuffer()
     _last_segment_count = 0
 
+    # Set audio input device if specified
+    input_device = _settings.get("input_device")
+    if input_device is not None:
+        sd.default.device[0] = input_device
+
+    compute = _settings.get("compute", "cpu")
+
     try:
         _transcriber = AudioTranscriber(
             model_size=_settings["model"],
-            device="cpu",
+            device=compute,
             chunk_sec=5,
             diarize=_settings.get("diarize", False),
             language=_settings.get("language"),
@@ -298,14 +378,20 @@ async def api_dispatch():
     loop = _event_loop or asyncio.get_running_loop()
 
     def _run():
-        response_text = _dispatcher.dispatch()
-        resp = {
-            "id": did,
-            "time": datetime.now().strftime("%H:%M:%S"),
-            "response": response_text or "(No response from LLM)",
-        }
-        _dispatch_responses.append(resp)
-        asyncio.run_coroutine_threadsafe(_broadcast_response(did, resp), loop)
+        if _settings.get("stream"):
+            _run_streaming(did, loop)
+        else:
+            result = _dispatcher.dispatch()
+            if result:
+                resp = {
+                    "id": did,
+                    "time": datetime.now().strftime("%H:%M:%S"),
+                    "response": result if isinstance(result, str) else "(Dispatch completed)",
+                }
+                _dispatch_responses.append(resp)
+                asyncio.run_coroutine_threadsafe(
+                    _broadcast_response(did, resp), loop
+                )
 
     thread = threading.Thread(target=_run, daemon=True)
     thread.start()
@@ -313,11 +399,83 @@ async def api_dispatch():
     return JSONResponse({"ok": True, "dispatch_id": did})
 
 
+def _run_streaming(did: int, loop: asyncio.AbstractEventLoop):
+    """Execute a streaming dispatch, broadcasting chunks over WebSocket."""
+    d = _dispatcher
+    with d._dispatch_lock:
+        # Build the prompt (mirrors _dispatch_unlocked prompt logic)
+        if d.context:
+            prior, new = d.buffer.take_with_context(d.context_limit)
+        else:
+            prior = []
+            new = d.buffer.take_unsent()
+
+        if not new:
+            resp = {
+                "id": did,
+                "time": datetime.now().strftime("%H:%M:%S"),
+                "response": "(No new transcript to send)",
+            }
+            _dispatch_responses.append(resp)
+            asyncio.run_coroutine_threadsafe(
+                _broadcast_response(did, resp), loop
+            )
+            return
+
+        prompt = d._build_prompt(prior, new)
+        d._dispatch_count += 1
+
+    # Stream chunks outside the lock so the provider can take its time
+    full_response = []
+    for chunk in d.provider.send_streaming(prompt):
+        full_response.append(chunk)
+        asyncio.run_coroutine_threadsafe(
+            _broadcast(
+                {
+                    "type": "llm_streaming_chunk",
+                    "id": did,
+                    "chunk": chunk,
+                }
+            ),
+            loop,
+        )
+
+    response_text = "".join(full_response).strip() or None
+
+    # Track conversation history if enabled
+    if d.conversation and response_text:
+        d._history.append(
+            {
+                "transcript": d._format_segments(new),
+                "response": response_text,
+            }
+        )
+
+    # Send the final complete response
+    resp = {
+        "id": did,
+        "time": datetime.now().strftime("%H:%M:%S"),
+        "response": response_text or "(No response from LLM)",
+    }
+    _dispatch_responses.append(resp)
+    asyncio.run_coroutine_threadsafe(_broadcast_response(did, resp), loop)
+
+
 @app.post("/api/settings")
 async def api_settings(request: Request):
     body = await request.json()
     _settings.update({k: v for k, v in body.items() if k in _settings})
     return JSONResponse({"ok": True, "settings": _settings})
+
+
+@app.get("/api/presets")
+async def api_presets():
+    """Return all available prompt presets (built-in + custom)."""
+    presets = get_all_presets()
+    return JSONResponse({
+        "presets": presets,
+        "default": DEFAULT_PRESET,
+    })
 
 
 # ---------------------------------------------------------------------------

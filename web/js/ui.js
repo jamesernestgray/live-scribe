@@ -3,6 +3,10 @@
  */
 
 var LiveScribeUI = (function () {
+    // Preset data (populated by loadPresets)
+    var _presets = {};
+    var _defaultPreset = 'collaborator';
+
     // Speaker color assignment
     var _speakerColors = {};
     var _speakerCount = 0;
@@ -135,6 +139,7 @@ var LiveScribeUI = (function () {
         var toggleBtn = document.getElementById('btn-toggle');
         var dispatchBtn = document.getElementById('btn-dispatch');
         var saveBtn = document.getElementById('btn-save');
+        var saveFormat = document.getElementById('save-format');
 
         if (status.recording) {
             dot.className = 'status-dot status-dot--active';
@@ -146,6 +151,7 @@ var LiveScribeUI = (function () {
             toggleBtn.classList.add('btn--danger');
             dispatchBtn.disabled = false;
             saveBtn.disabled = false;
+            if (saveFormat) saveFormat.disabled = false;
         } else {
             dot.className = 'status-dot status-dot--inactive';
             statusText.textContent = 'Idle' + (status.segments ? ' \u2014 ' + status.segments + ' segments' : '');
@@ -174,6 +180,7 @@ var LiveScribeUI = (function () {
     }
 
     function getSettingsFromForm() {
+        var inputDeviceVal = document.getElementById('setting-input-device').value;
         return {
             model: document.getElementById('setting-model').value,
             language: document.getElementById('setting-language').value || null,
@@ -186,6 +193,8 @@ var LiveScribeUI = (function () {
             context_limit: parseInt(document.getElementById('setting-context-limit').value, 10) || 0,
             stream: document.getElementById('setting-stream').checked,
             conversation: document.getElementById('setting-conversation').checked,
+            input_device: inputDeviceVal === '' ? null : parseInt(inputDeviceVal, 10),
+            compute: document.getElementById('setting-compute').value,
         };
     }
 
@@ -201,6 +210,10 @@ var LiveScribeUI = (function () {
         document.getElementById('setting-context-limit').value = settings.context_limit || 0;
         document.getElementById('setting-stream').checked = !!settings.stream;
         document.getElementById('setting-conversation').checked = !!settings.conversation;
+        document.getElementById('setting-input-device').value = settings.input_device != null ? settings.input_device : '';
+        if (settings.compute) document.getElementById('setting-compute').value = settings.compute;
+        // Sync preset dropdown to match current prompt text
+        if (settings.prompt) syncPresetSelect(settings.prompt);
         _toggleContextLimit();
     }
 
@@ -220,9 +233,100 @@ var LiveScribeUI = (function () {
         document.getElementById('segment-count').textContent = '0 segments';
     }
 
+    function appendResponseChunk(id, chunk) {
+        var container = document.getElementById('responses');
+        var card = id ? container.querySelector('[data-dispatch-id="' + id + '"]') : null;
+
+        if (!card) {
+            // Create a new streaming card if one doesn't exist yet
+            addResponse({
+                id: id,
+                time: new Date().toLocaleTimeString('en-GB', { hour12: false }),
+                response: chunk,
+                pending: true,
+            });
+            return;
+        }
+
+        var textEl = card.querySelector('.response__text');
+        if (!textEl) return;
+
+        // If the card still shows the placeholder text, replace it
+        if (card.classList.contains('response--pending')) {
+            textEl.textContent = chunk;
+            card.classList.remove('response--pending');
+        } else {
+            textEl.textContent += chunk;
+        }
+
+        container.scrollTop = container.scrollHeight;
+    }
+
+    // --- Preset management ---
+
+    function populatePresets(presets, defaultPreset) {
+        _presets = presets || {};
+        _defaultPreset = defaultPreset || 'collaborator';
+
+        var select = document.getElementById('setting-preset');
+        // Remove all options except "Custom"
+        while (select.options.length > 0) {
+            select.remove(0);
+        }
+
+        // Add preset options
+        var names = Object.keys(_presets);
+        for (var i = 0; i < names.length; i++) {
+            var opt = document.createElement('option');
+            opt.value = names[i];
+            opt.textContent = names[i];
+            select.appendChild(opt);
+        }
+
+        // Add "Custom" option last
+        var customOpt = document.createElement('option');
+        customOpt.value = 'custom';
+        customOpt.textContent = 'Custom';
+        select.appendChild(customOpt);
+    }
+
+    function onPresetChange() {
+        var select = document.getElementById('setting-preset');
+        var textarea = document.getElementById('setting-prompt');
+        var presetName = select.value;
+
+        if (presetName === 'custom') {
+            textarea.readOnly = false;
+        } else if (_presets[presetName]) {
+            textarea.value = _presets[presetName];
+            textarea.readOnly = true;
+        }
+    }
+
+    function syncPresetSelect(promptText) {
+        var select = document.getElementById('setting-preset');
+        // Try to find a matching preset
+        var names = Object.keys(_presets);
+        for (var i = 0; i < names.length; i++) {
+            if (_presets[names[i]] === promptText) {
+                select.value = names[i];
+                document.getElementById('setting-prompt').readOnly = true;
+                return;
+            }
+        }
+        // No match found — set to custom
+        select.value = 'custom';
+        document.getElementById('setting-prompt').readOnly = false;
+    }
+
+    function getPresets() {
+        return _presets;
+    }
+
     return {
         addSegment: addSegment,
         addResponse: addResponse,
+        appendResponseChunk: appendResponseChunk,
         updateStatus: updateStatus,
         setConnected: setConnected,
         showSettingsModal: showSettingsModal,
@@ -232,5 +336,9 @@ var LiveScribeUI = (function () {
         setTheme: setTheme,
         clearTranscript: clearTranscript,
         toggleContextLimit: _toggleContextLimit,
+        populatePresets: populatePresets,
+        onPresetChange: onPresetChange,
+        syncPresetSelect: syncPresetSelect,
+        getPresets: getPresets,
     };
 })();

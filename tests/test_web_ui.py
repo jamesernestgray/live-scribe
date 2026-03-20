@@ -38,6 +38,8 @@ def reset_server_state():
         "stream": False,
         "conversation": False,
         "diarize": False,
+        "input_device": None,
+        "compute": "cpu",
     })
     yield
 

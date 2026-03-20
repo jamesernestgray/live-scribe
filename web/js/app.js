@@ -26,6 +26,8 @@
             context_limit: 0,
             stream: false,
             conversation: false,
+            input_device: null,
+            compute: 'cpu',
         },
     };
 
@@ -58,7 +60,7 @@
                 break;
 
             case 'llm_streaming_chunk':
-                // Future: handle streaming
+                LiveScribeUI.appendResponseChunk(msg.id, msg.chunk);
                 break;
 
             case 'status':
@@ -132,28 +134,43 @@
             });
         });
 
-        // Save button
+        // Save button — download transcript in the selected format
         document.getElementById('btn-save').addEventListener('click', function () {
-            fetch('/api/transcript')
-                .then(function (r) { return r.json(); })
-                .then(function (data) {
-                    var lines = data.segments.map(function (s) {
-                        var spk = s.speaker ? ' [' + s.speaker + ']' : '';
-                        return '[' + s.time + ']' + spk + ' ' + s.text;
-                    });
-                    var blob = new Blob([lines.join('\n')], { type: 'text/plain' });
-                    var url = URL.createObjectURL(blob);
-                    var a = document.createElement('a');
-                    a.href = url;
-                    a.download = 'transcript-' + new Date().toISOString().slice(0, 19).replace(/:/g, '-') + '.txt';
-                    a.click();
-                    URL.revokeObjectURL(url);
-                });
+            var fmt = document.getElementById('save-format').value;
+            var a = document.createElement('a');
+            a.href = '/api/transcript/export?format=' + encodeURIComponent(fmt);
+            a.download = '';  // let the Content-Disposition header set the filename
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
         });
 
         // Settings modal
         document.getElementById('btn-settings').addEventListener('click', function () {
             LiveScribeUI.applySettingsToForm(state.settings);
+            // Fetch audio devices and populate dropdown each time modal opens
+            fetch('/api/devices')
+                .then(function (r) { return r.json(); })
+                .then(function (data) {
+                    var select = document.getElementById('setting-input-device');
+                    var currentVal = select.value;
+                    select.innerHTML = '<option value="">System Default</option>';
+                    (data.devices || []).forEach(function (dev) {
+                        var opt = document.createElement('option');
+                        opt.value = dev.index;
+                        opt.textContent = dev.name + ' (ch: ' + dev.channels + ')' + (dev.default ? ' [default]' : '');
+                        select.appendChild(opt);
+                    });
+                    // Restore selection
+                    if (state.settings.input_device != null) {
+                        select.value = state.settings.input_device;
+                    } else {
+                        select.value = '';
+                    }
+                })
+                .catch(function (err) {
+                    console.error('Failed to fetch audio devices:', err);
+                });
             LiveScribeUI.showSettingsModal();
         });
 
@@ -163,6 +180,11 @@
 
         document.querySelector('.modal__backdrop').addEventListener('click', function () {
             LiveScribeUI.hideSettingsModal();
+        });
+
+        // Preset dropdown change
+        document.getElementById('setting-preset').addEventListener('change', function () {
+            LiveScribeUI.onPresetChange();
         });
 
         document.getElementById('btn-save-settings').addEventListener('click', function () {
@@ -232,11 +254,26 @@
         } catch (e) { /* noop */ }
     }
 
+    // --- Load presets from server ---
+    function loadPresets() {
+        fetch('/api/presets')
+            .then(function (r) { return r.json(); })
+            .then(function (data) {
+                LiveScribeUI.populatePresets(data.presets, data.default);
+                // Sync preset dropdown to current prompt
+                LiveScribeUI.syncPresetSelect(state.settings.prompt);
+            })
+            .catch(function (err) {
+                console.error('[App] Failed to load presets:', err);
+            });
+    }
+
     // --- Init ---
     function init() {
         connectWebSocket();
         bindEventListeners();
         loadSettings();
+        loadPresets();
     }
 
     // Wait for DOM

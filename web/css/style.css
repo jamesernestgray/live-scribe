@@ -526,6 +526,45 @@ body {
     margin: 16px 0;
 }
 
+/* ---------- Save Group (split button) ---------- */
+
+.save-group {
+    display: inline-flex;
+    align-items: stretch;
+}
+
+.save-group__btn {
+    border-top-right-radius: 0;
+    border-bottom-right-radius: 0;
+    border-right: none;
+}
+
+.save-group__select {
+    width: auto;
+    padding: 4px 6px;
+    background: var(--bg-panel);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-top-right-radius: 6px;
+    border-bottom-right-radius: 6px;
+    border-top-left-radius: 0;
+    border-bottom-left-radius: 0;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s, opacity 0.15s;
+    appearance: auto;
+}
+
+.save-group__select:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.save-group__select:hover:not(:disabled) {
+    background: var(--bg-hover);
+}
+
 /* ---------- Scrollbar ---------- */
 
 .panel__body::-webkit-scrollbar {

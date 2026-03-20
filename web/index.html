@@ -66,9 +66,17 @@
             <button id="btn-dispatch" class="btn btn--secondary" disabled>
                 Dispatch to LLM
             </button>
-            <button id="btn-save" class="btn btn--secondary" disabled>
-                Save Transcript
-            </button>
+            <div class="save-group">
+                <button id="btn-save" class="btn btn--secondary save-group__btn" disabled>
+                    Save Transcript
+                </button>
+                <select id="save-format" class="save-group__select" disabled>
+                    <option value="txt">TXT</option>
+                    <option value="md">MD</option>
+                    <option value="json">JSON</option>
+                    <option value="srt">SRT</option>
+                </select>
+            </div>
         </div>
     </footer>
 
@@ -87,6 +95,12 @@
             </div>
             <div class="modal__body">
                 <div class="form-group">
+                    <label for="setting-input-device">Audio Input Device</label>
+                    <select id="setting-input-device">
+                        <option value="">System Default</option>
+                    </select>
+                </div>
+                <div class="form-group">
                     <label for="setting-model">Whisper Model</label>
                     <select id="setting-model">
                         <option value="tiny">tiny</option>
@@ -97,12 +111,26 @@
                     </select>
                 </div>
                 <div class="form-group">
+                    <label for="setting-compute">Compute Device</label>
+                    <select id="setting-compute">
+                        <option value="cpu" selected>CPU</option>
+                        <option value="cuda">CUDA (GPU)</option>
+                        <option value="auto">Auto</option>
+                    </select>
+                </div>
+                <div class="form-group">
                     <label for="setting-language">Language (blank = auto)</label>
                     <input id="setting-language" type="text" placeholder="e.g. en, es, fr">
                 </div>
                 <div class="form-group">
                     <label for="setting-interval">Dispatch Interval (seconds)</label>
                     <input id="setting-interval" type="number" value="60" min="10" max="600">
+                </div>
+                <div class="form-group">
+                    <label for="setting-preset">Prompt Preset</label>
+                    <select id="setting-preset">
+                        <option value="custom">Custom</option>
+                    </select>
                 </div>
                 <div class="form-group">
                     <label for="setting-prompt">System Prompt</label>
