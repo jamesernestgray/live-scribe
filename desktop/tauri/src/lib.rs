@@ -2,17 +2,22 @@ use serde::{Deserialize, Serialize};
 use std::process::{Child, Command};
 use std::sync::Mutex;
 
+pub const BACKEND_URL: &str = "http://127.0.0.1:8765";
+
 /// Shared state for the Python backend process and recording status.
 pub struct AppState {
     pub python_process: Mutex<Option<Child>>,
-    pub is_recording: Mutex<bool>,
+    pub http_client: reqwest::blocking::Client,
 }
 
 impl AppState {
     pub fn new() -> Self {
         Self {
             python_process: Mutex::new(None),
-            is_recording: Mutex::new(false),
+            http_client: reqwest::blocking::Client::builder()
+                .timeout(std::time::Duration::from_secs(5))
+                .build()
+                .expect("failed to create HTTP client"),
         }
     }
 }
@@ -28,6 +33,82 @@ pub struct StatusResponse {
     pub recording: bool,
     pub backend_running: bool,
 }
+
+/// Response from the Python backend's /api/status endpoint.
+#[derive(Debug, Deserialize)]
+pub struct BackendStatusResponse {
+    pub recording: bool,
+}
+
+// ── HTTP helpers to communicate with the Python backend ──────────────
+
+/// Query the Python backend for current recording status.
+pub fn backend_status(state: &AppState) -> Result<BackendStatusResponse, String> {
+    let resp = state
+        .http_client
+        .get(format!("{}/api/status", BACKEND_URL))
+        .send()
+        .map_err(|e| format!("Backend status request failed: {}", e))?;
+
+    resp.json::<BackendStatusResponse>()
+        .map_err(|e| format!("Failed to parse status response: {}", e))
+}
+
+/// Tell the Python backend to start recording.
+pub fn backend_start_recording(state: &AppState) -> Result<(), String> {
+    state
+        .http_client
+        .post(format!("{}/api/start", BACKEND_URL))
+        .json(&serde_json::json!({}))
+        .send()
+        .map_err(|e| format!("Backend start request failed: {}", e))?;
+    Ok(())
+}
+
+/// Tell the Python backend to stop recording.
+pub fn backend_stop_recording(state: &AppState) -> Result<(), String> {
+    state
+        .http_client
+        .post(format!("{}/api/stop", BACKEND_URL))
+        .json(&serde_json::json!({}))
+        .send()
+        .map_err(|e| format!("Backend stop request failed: {}", e))?;
+    Ok(())
+}
+
+/// Tell the Python backend to dispatch the transcript to Claude.
+pub fn backend_dispatch(state: &AppState) -> Result<(), String> {
+    state
+        .http_client
+        .post(format!("{}/api/dispatch", BACKEND_URL))
+        .json(&serde_json::json!({}))
+        .send()
+        .map_err(|e| format!("Backend dispatch request failed: {}", e))?;
+    Ok(())
+}
+
+/// Toggle recording: queries current state, then starts or stops accordingly.
+/// Returns the new recording state (true = now recording).
+pub fn backend_toggle_recording(state: &AppState) -> Result<bool, String> {
+    match backend_status(state) {
+        Ok(status) => {
+            if status.recording {
+                backend_stop_recording(state)?;
+                Ok(false)
+            } else {
+                backend_start_recording(state)?;
+                Ok(true)
+            }
+        }
+        Err(_) => {
+            // Backend might not be ready; try to start recording optimistically
+            backend_start_recording(state)?;
+            Ok(true)
+        }
+    }
+}
+
+// ── Python backend process management ────────────────────────────────
 
 /// Start the Python web server (web_server.py) as a sidecar process.
 ///
@@ -68,7 +149,7 @@ pub fn stop_python_backend(state: &AppState) -> Result<(), String> {
 }
 
 /// Locate a Python interpreter, preferring a venv next to the server script.
-fn find_python(server_script: &str) -> Result<String, String> {
+pub fn find_python(server_script: &str) -> Result<String, String> {
     let script_dir = std::path::Path::new(server_script)
         .parent()
         .unwrap_or(std::path::Path::new("."));
@@ -105,12 +186,20 @@ pub fn find_backend_script() -> Result<String, String> {
         std::env::current_exe()
             .map(|e| e.parent().unwrap_or(e.as_path()).join("web_server.py"))
             .unwrap_or_default(),
-        // Bundled macOS: inside .app bundle Resources
+        // Bundled macOS: inside .app bundle Resources (flat)
         std::env::current_exe()
             .map(|e| {
                 e.parent()
                     .unwrap_or(e.as_path())
                     .join("../Resources/web_server.py")
+            })
+            .unwrap_or_default(),
+        // Bundled macOS: Tauri resource dir (../../file.py -> _up_/_up_/file.py)
+        std::env::current_exe()
+            .map(|e| {
+                e.parent()
+                    .unwrap_or(e.as_path())
+                    .join("../Resources/_up_/_up_/web_server.py")
             })
             .unwrap_or_default(),
     ];

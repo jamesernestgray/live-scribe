@@ -46,71 +46,18 @@
         @keyframes spin {
             to { transform: rotate(360deg); }
         }
-        .retry-info {
-            font-size: 0.9rem;
-            color: #666;
-            margin-top: 1rem;
-        }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>Live Scribe</h1>
         <div class="spinner"></div>
-        <p class="status" id="status">Connecting to backend...</p>
-        <p class="retry-info" id="retry-info"></p>
+        <p class="status">Starting backend...</p>
     </div>
-
-    <script>
-        // This placeholder page attempts to connect to the Python backend.
-        // Once the web UI feature branch is merged, the actual web UI will
-        // be served from the backend at http://localhost:8765.
-        //
-        // For now, this page polls the backend and redirects when ready.
-
-        const BACKEND_URL = 'http://localhost:8765';
-        const MAX_RETRIES = 30;
-        const RETRY_INTERVAL_MS = 2000;
-        let retryCount = 0;
-
-        async function checkBackend() {
-            try {
-                const response = await fetch(BACKEND_URL, {
-                    method: 'GET',
-                    mode: 'no-cors',
-                });
-                // If we get here without throwing, the backend is up
-                window.location.href = BACKEND_URL;
-            } catch (e) {
-                retryCount++;
-                if (retryCount >= MAX_RETRIES) {
-                    document.getElementById('status').textContent =
-                        'Could not connect to backend. Please check that the Python server is running.';
-                    document.getElementById('retry-info').textContent =
-                        'Try restarting the application or running web_server.py manually.';
-                    document.querySelector('.spinner').style.display = 'none';
-                    return;
-                }
-                document.getElementById('retry-info').textContent =
-                    `Attempt ${retryCount}/${MAX_RETRIES}...`;
-                setTimeout(checkBackend, RETRY_INTERVAL_MS);
-            }
-        }
-
-        // Start polling after a brief delay to let the backend spin up
-        setTimeout(checkBackend, 1000);
-
-        // Listen for dispatch events from the Tauri backend (system tray / shortcuts)
-        if (window.__TAURI__) {
-            const { listen } = window.__TAURI__.event;
-            listen('dispatch-requested', () => {
-                // Forward to the web UI's dispatch mechanism once loaded
-                if (window.location.href.startsWith(BACKEND_URL)) {
-                    // The web UI will handle this event
-                    window.dispatchEvent(new CustomEvent('live-scribe-dispatch'));
-                }
-            });
-        }
-    </script>
+    <!-- This is a static fallback page shown briefly while the Python
+         backend starts up. The Tauri window is configured to load the
+         web UI directly from http://localhost:8765. The Rust setup()
+         polls the backend and shows the window only once it is ready,
+         so this page is rarely seen in practice. -->
 </body>
 </html>
