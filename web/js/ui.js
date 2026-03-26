@@ -323,6 +323,60 @@ var LiveScribeUI = (function () {
         return _presets;
     }
 
+    // --- Toast notifications ---
+
+    function _getToastContainer() {
+        return document.getElementById('toast-container');
+    }
+
+    function _showToast(message, type) {
+        var container = _getToastContainer();
+        if (!container) return;
+
+        var toast = document.createElement('div');
+        toast.className = 'toast toast--' + type;
+
+        var msgSpan = document.createElement('span');
+        msgSpan.className = 'toast__message';
+        msgSpan.textContent = message;
+        toast.appendChild(msgSpan);
+
+        var closeBtn = document.createElement('button');
+        closeBtn.className = 'toast__close';
+        closeBtn.innerHTML = '&times;';
+        closeBtn.setAttribute('aria-label', 'Dismiss');
+        closeBtn.addEventListener('click', function () {
+            _dismissToast(toast);
+        });
+        toast.appendChild(closeBtn);
+
+        container.appendChild(toast);
+
+        // Auto-dismiss after 8 seconds
+        var timer = setTimeout(function () {
+            _dismissToast(toast);
+        }, 8000);
+        toast._timer = timer;
+    }
+
+    function _dismissToast(toast) {
+        if (toast._dismissed) return;
+        toast._dismissed = true;
+        if (toast._timer) clearTimeout(toast._timer);
+        toast.classList.add('toast--exiting');
+        setTimeout(function () {
+            if (toast.parentNode) toast.parentNode.removeChild(toast);
+        }, 300);
+    }
+
+    function showError(message) {
+        _showToast(message, 'error');
+    }
+
+    function showSuccess(message) {
+        _showToast(message, 'success');
+    }
+
     return {
         addSegment: addSegment,
         addResponse: addResponse,
@@ -340,5 +394,7 @@ var LiveScribeUI = (function () {
         onPresetChange: onPresetChange,
         syncPresetSelect: syncPresetSelect,
         getPresets: getPresets,
+        showError: showError,
+        showSuccess: showSuccess,
     };
 })();

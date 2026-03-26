@@ -283,7 +283,13 @@ async def api_transcript_export(format: str = Query("txt", pattern="^(txt|md|jso
 @app.get("/api/devices")
 async def api_devices():
     """List available audio input devices."""
-    devices = sd.query_devices()
+    try:
+        devices = sd.query_devices()
+    except Exception as e:
+        return JSONResponse(
+            {"error": f"Failed to query audio devices: {e}"},
+            status_code=500,
+        )
     input_devices = []
     for i, dev in enumerate(devices):
         if dev["max_input_channels"] > 0:
@@ -313,7 +319,19 @@ async def api_start(config: StartConfig | None = None):
     # Set audio input device if specified
     input_device = _settings.get("input_device")
     if input_device is not None:
-        sd.default.device[0] = input_device
+        try:
+            dev_info = sd.query_devices(input_device)
+            if dev_info["max_input_channels"] <= 0:
+                return JSONResponse(
+                    {"error": f"Audio device {input_device} ({dev_info['name']}) has no input channels"},
+                    status_code=400,
+                )
+            sd.default.device[0] = input_device
+        except Exception as e:
+            return JSONResponse(
+                {"error": f"Audio device not found (index {input_device}): {e}"},
+                status_code=400,
+            )
 
     compute = _settings.get("compute", "cpu")
 
@@ -328,7 +346,16 @@ async def api_start(config: StartConfig | None = None):
         # Share the buffer
         _transcriber.buffer = _buffer
     except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=500)
+        error_msg = str(e)
+        # Provide more specific error messages for common failures
+        if "pyannote" in error_msg.lower() or "hf_token" in error_msg.lower() or "hugging" in error_msg.lower():
+            error_msg = (
+                f"Diarization not available: {error_msg}. "
+                "Ensure pyannote.audio is installed and HF_TOKEN is set."
+            )
+        elif "model" in error_msg.lower() or "download" in error_msg.lower():
+            error_msg = f"Whisper model failed to load: {error_msg}"
+        return JSONResponse({"error": error_msg}, status_code=500)
 
     _dispatcher = LLMDispatcher(
         buffer=_buffer,
@@ -378,20 +405,31 @@ async def api_dispatch():
     loop = _event_loop or asyncio.get_running_loop()
 
     def _run():
-        if _settings.get("stream"):
-            _run_streaming(did, loop)
-        else:
-            result = _dispatcher.dispatch()
-            if result:
-                resp = {
-                    "id": did,
-                    "time": datetime.now().strftime("%H:%M:%S"),
-                    "response": result if isinstance(result, str) else "(Dispatch completed)",
-                }
-                _dispatch_responses.append(resp)
-                asyncio.run_coroutine_threadsafe(
-                    _broadcast_response(did, resp), loop
-                )
+        try:
+            if _settings.get("stream"):
+                _run_streaming(did, loop)
+            else:
+                result = _dispatcher.dispatch()
+                if result:
+                    resp = {
+                        "id": did,
+                        "time": datetime.now().strftime("%H:%M:%S"),
+                        "response": result if isinstance(result, str) else "(Dispatch completed)",
+                    }
+                    _dispatch_responses.append(resp)
+                    asyncio.run_coroutine_threadsafe(
+                        _broadcast_response(did, resp), loop
+                    )
+        except Exception as e:
+            error_resp = {
+                "id": did,
+                "time": datetime.now().strftime("%H:%M:%S"),
+                "response": f"(LLM error: {e})",
+            }
+            _dispatch_responses.append(error_resp)
+            asyncio.run_coroutine_threadsafe(
+                _broadcast_response(did, error_resp), loop
+            )
 
     thread = threading.Thread(target=_run, daemon=True)
     thread.start()

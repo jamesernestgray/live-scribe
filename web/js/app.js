@@ -43,7 +43,18 @@
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: body ? JSON.stringify(body) : '{}',
-        }).then(function (r) { return r.json(); });
+        }).then(function (r) {
+            return r.json().then(function (data) {
+                if (!r.ok) {
+                    var msg = (data && data.error) ? data.error : 'Request failed (HTTP ' + r.status + ')';
+                    var err = new Error(msg);
+                    err.status = r.status;
+                    err.data = data;
+                    throw err;
+                }
+                return data;
+            });
+        });
     }
 
     // --- WebSocket message handler ---
@@ -89,14 +100,14 @@
     // --- Reusable actions ---
     function toggleRecording() {
         if (state.recording) {
-            apiPost('/api/stop').then(function (data) {
-                if (data.error) console.error('Stop error:', data.error);
+            apiPost('/api/stop').catch(function (err) {
+                LiveScribeUI.showError('Failed to stop recording: ' + err.message);
             });
         } else {
             LiveScribeUI.clearTranscript();
             state.segments = [];
-            apiPost('/api/start', { config: state.settings }).then(function (data) {
-                if (data.error) console.error('Start error:', data.error);
+            apiPost('/api/start', { config: state.settings }).catch(function (err) {
+                LiveScribeUI.showError('Failed to start recording: ' + err.message);
             });
         }
     }
@@ -112,6 +123,8 @@
                     response: '(Dispatched to LLM \u2014 awaiting response...)',
                 });
             }
+        }).catch(function (err) {
+            LiveScribeUI.showError('Dispatch failed: ' + err.message);
         });
     }
 
@@ -131,6 +144,8 @@
                         pending: true,
                     });
                 }
+            }).catch(function (err) {
+                LiveScribeUI.showError('Dispatch failed: ' + err.message);
             });
         });
 
@@ -143,6 +158,7 @@
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);
+            LiveScribeUI.showSuccess('Transcript exported as ' + fmt.toUpperCase());
         });
 
         // Settings modal
@@ -150,7 +166,14 @@
             LiveScribeUI.applySettingsToForm(state.settings);
             // Fetch audio devices and populate dropdown each time modal opens
             fetch('/api/devices')
-                .then(function (r) { return r.json(); })
+                .then(function (r) {
+                    if (!r.ok) {
+                        return r.json().then(function (data) {
+                            throw new Error((data && data.error) || 'Failed to fetch devices');
+                        });
+                    }
+                    return r.json();
+                })
                 .then(function (data) {
                     var select = document.getElementById('setting-input-device');
                     var currentVal = select.value;
@@ -169,7 +192,7 @@
                     }
                 })
                 .catch(function (err) {
-                    console.error('Failed to fetch audio devices:', err);
+                    LiveScribeUI.showError('Failed to load audio devices: ' + err.message);
                 });
             LiveScribeUI.showSettingsModal();
         });
@@ -192,7 +215,11 @@
             Object.assign(state.settings, formSettings);
 
             // Send to server
-            apiPost('/api/settings', state.settings);
+            apiPost('/api/settings', state.settings).then(function () {
+                LiveScribeUI.showSuccess('Settings saved');
+            }).catch(function (err) {
+                LiveScribeUI.showError('Failed to save settings: ' + err.message);
+            });
 
             // Apply theme locally
             var theme = document.getElementById('setting-theme').value;

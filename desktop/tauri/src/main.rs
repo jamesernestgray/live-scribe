@@ -96,8 +96,8 @@ fn main() {
                             }
                         }
                         "save_transcript" => {
-                            // Open the web UI in the default browser for export
-                            let _ = open::that("http://127.0.0.1:8765");
+                            // Trigger a transcript export download in the default browser
+                            let _ = open::that("http://127.0.0.1:8765/api/transcript/export?format=txt");
                         }
                         "quit" => {
                             let _ = stop_python_backend(state.inner());

@@ -28,8 +28,14 @@ export type Transcript = TranscriptSegment[];
 // LLM
 // ---------------------------------------------------------------------------
 
-/** Supported LLM provider names. */
+/** Supported LLM provider names (for standalone mode). */
 export type LLMProviderName = 'anthropic' | 'openai' | 'gemini';
+
+/**
+ * Provider names that can appear on an LLMResponse.
+ * Includes 'remote' for responses received from the backend server.
+ */
+export type LLMResponseProvider = LLMProviderName | 'remote';
 
 /** Configuration for a single LLM provider. */
 export interface LLMConfig {
@@ -44,7 +50,7 @@ export interface LLMConfig {
 export interface LLMResponse {
   id: string;
   /** Which provider generated this response. */
-  provider: LLMProviderName;
+  provider: LLMResponseProvider;
   model: string;
   /** The full response text. */
   text: string;
@@ -94,7 +100,11 @@ export interface AppSettings {
   /** Custom system prompt for LLM analysis. */
   systemPrompt: string;
 
-  /** For remote mode: the live-scribe server WebSocket URL. */
+  /**
+   * For remote mode: the live-scribe server HTTP URL.
+   * E.g. "http://192.168.1.5:8765"
+   * The WebSocket URL is derived automatically (ws://host:port/ws).
+   */
   serverUrl: string;
 
   /** Audio chunk duration in seconds (how often Whisper processes audio). */
@@ -115,7 +125,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     'If the speaker asks something, answer it directly. ' +
     'If they\'re discussing a design or problem, contribute meaningfully. ' +
     'Be concise and direct.',
-  serverUrl: 'ws://localhost:8765',
+  serverUrl: 'http://192.168.1.100:8765',
   chunkDurationSec: 5,
   autoDispatchIntervalSec: 60,
 };
@@ -137,3 +147,10 @@ export type RootTabParamList = {
 
 /** High-level recording status shown in the UI. */
 export type RecordingStatus = 'idle' | 'recording' | 'paused' | 'processing';
+
+// ---------------------------------------------------------------------------
+// Remote server connection
+// ---------------------------------------------------------------------------
+
+/** WebSocket connection state for the remote server. */
+export type ConnectionState = 'disconnected' | 'connecting' | 'connected';

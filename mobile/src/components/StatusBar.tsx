@@ -10,7 +10,7 @@
 
 import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import { AppMode, RecordingStatus } from '../types';
+import { AppMode, ConnectionState, RecordingStatus } from '../types';
 import { colors, spacing, typography } from '../theme';
 
 // ---------------------------------------------------------------------------
@@ -32,6 +32,9 @@ interface StatusBarProps {
 
   /** Current operating mode. */
   mode: AppMode;
+
+  /** WebSocket connection state (remote mode only). */
+  connectionState?: ConnectionState;
 }
 
 // ---------------------------------------------------------------------------
@@ -44,21 +47,43 @@ export default function AppStatusBar({
   chunkCount,
   dispatchCount,
   mode,
+  connectionState,
 }: StatusBarProps) {
   const isRecording = recordingStatus === 'recording';
-  const statusColor = isRecording ? colors.recordingRed : colors.success;
-  const statusLabel =
-    recordingStatus === 'idle'
-      ? 'Idle'
-      : recordingStatus === 'recording'
-      ? 'Recording'
-      : recordingStatus === 'paused'
-      ? 'Paused'
-      : 'Processing';
+  const isRemote = mode === 'remote';
+
+  // In remote mode, connection state takes priority for status indicator
+  const statusColor = isRemote
+    ? connectionState === 'connected'
+      ? isRecording
+        ? colors.recordingRed
+        : colors.success
+      : connectionState === 'connecting'
+      ? colors.warning
+      : colors.textMuted
+    : isRecording
+    ? colors.recordingRed
+    : colors.success;
+
+  const statusLabel = isRemote
+    ? connectionState === 'connected'
+      ? isRecording
+        ? 'Recording'
+        : 'Connected'
+      : connectionState === 'connecting'
+      ? 'Connecting...'
+      : 'Disconnected'
+    : recordingStatus === 'idle'
+    ? 'Idle'
+    : recordingStatus === 'recording'
+    ? 'Recording'
+    : recordingStatus === 'paused'
+    ? 'Paused'
+    : 'Processing';
 
   return (
     <View style={styles.container}>
-      {/* Left: recording status */}
+      {/* Left: recording/connection status */}
       <View style={styles.statusGroup}>
         <View style={[styles.dot, { backgroundColor: statusColor }]} />
         <Text style={styles.statusText}>{statusLabel}</Text>

@@ -1,15 +1,24 @@
 # live-scribe
 
-Real-time audio transcription with periodic Claude analysis.
+Real-time audio transcription with periodic LLM analysis.
 
-Captures microphone audio, transcribes it locally using [faster-whisper](https://github.com/SYSTRAN/faster-whisper), and sends the transcript to [Claude Code](https://docs.anthropic.com/en/docs/claude-code) CLI for analysis — either automatically on a timer or manually when you press Enter. Optionally identifies distinct speakers via [pyannote](https://github.com/pyannote/pyannote-audio) diarization.
+Captures microphone audio, transcribes it locally using [faster-whisper](https://github.com/SYSTRAN/faster-whisper), and sends the transcript to an LLM for analysis — either automatically on a timer or manually. Optionally identifies distinct speakers via [pyannote](https://github.com/pyannote/pyannote-audio) diarization.
+
+Three ways to use it:
+
+| Interface | Launch | Best for |
+|-----------|--------|----------|
+| **CLI** | `python live_scribe.py` | Headless / scripting |
+| **Web UI** | `python web_server.py` then open `http://localhost:8765` | Browser-based with full settings panel |
+| **Desktop App** | Build from `desktop/` with Tauri | Native app with system tray and global shortcuts |
 
 ## Prerequisites
 
 - **Python 3.11+**
-- **Claude Code CLI** (`claude`) installed and authenticated — [install guide](https://docs.anthropic.com/en/docs/claude-code/getting-started)
+- **Claude Code CLI** (`claude`) installed and authenticated — [install guide](https://docs.anthropic.com/en/docs/claude-code/getting-started) *(required only for the default Claude CLI provider)*
 - **Microphone access** (macOS will prompt for permission on first run)
 - **HF_TOKEN** environment variable *(only if using `--diarize`)* — see [Speaker Diarization](#speaker-diarization)
+- **Rust 1.70+ and Node.js 18+** *(only if building the [Desktop App](#desktop-app-tauri))*
 
 ## Setup
 
@@ -39,6 +48,83 @@ python live_scribe.py --manual --context --diarize
 ```
 
 Press **Ctrl+C** to stop. The full session transcript is printed on exit.
+
+## Web UI
+
+The web UI provides a browser-based interface with real-time transcript display, settings panel, and LLM response streaming.
+
+```bash
+source .venv/bin/activate
+python web_server.py          # → http://localhost:8765
+```
+
+### Features
+
+| Feature | Description |
+|---------|-------------|
+| **LLM response streaming** | Enable "Stream Responses" in settings to see output appear token-by-token |
+| **Prompt presets** | Dropdown to switch between built-in presets (meeting notes, code review, lecture, interview, etc.) |
+| **Export formats** | Save transcript as TXT, Markdown, JSON, or SRT |
+| **Audio device selection** | Choose input microphone and compute device (CPU/CUDA/auto) |
+| **Speaker diarization** | Toggle on/off in settings |
+| **Context mode** | Send full transcript history with dispatches |
+| **Conversation mode** | Maintain multi-turn LLM history across dispatches |
+| **LLM provider selection** | Choose between Claude CLI, Anthropic API, OpenAI, Codex CLI, Gemini, Gemini CLI, Ollama, or LiteLLM |
+
+### Web Server Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/status` | Recording and backend status |
+| `GET` | `/api/transcript` | Current transcript segments |
+| `GET` | `/api/transcript/export?format=` | Export transcript (`txt`, `md`, `json`, `srt`) |
+| `GET` | `/api/devices` | List audio input devices |
+| `GET` | `/api/presets` | List prompt presets |
+| `POST` | `/api/start` | Start recording (accepts config JSON) |
+| `POST` | `/api/stop` | Stop recording |
+| `POST` | `/api/dispatch` | Send transcript to LLM |
+| `POST` | `/api/settings` | Update runtime settings |
+| `WS` | `/ws` | Real-time transcript and LLM response updates |
+
+## Desktop App (Tauri)
+
+A native desktop wrapper built with [Tauri 2.0](https://v2.tauri.app/). The app auto-starts the Python backend, loads the web UI in a native window, and adds OS-level integrations.
+
+### Quick Start
+
+```bash
+# Prerequisites: Rust 1.70+, Node.js 18+, Python 3.11+
+cargo install tauri-cli
+
+# Build
+./desktop/scripts/build-macos.sh      # macOS — produces .app and .dmg
+./desktop/scripts/build-linux.sh       # Linux — produces .deb and AppImage
+.\desktop\scripts\build-windows.ps1    # Windows — produces .msi and .exe
+```
+
+### System Tray
+
+Right-click the tray icon for:
+- **Toggle Recording** — start/stop audio capture
+- **Dispatch to Claude** — send current transcript for analysis
+- **Save Transcript** — export the session
+- **Quit** — close the app and clean up the backend
+
+### Global Shortcuts
+
+| Shortcut | Action |
+|----------|--------|
+| `Cmd+Shift+R` (macOS) / `Ctrl+Shift+R` | Toggle recording |
+| `Cmd+Shift+D` (macOS) / `Ctrl+Shift+D` | Dispatch transcript to LLM |
+
+### How It Works
+
+1. Tauri launches and starts `web_server.py` via the project's Python venv
+2. The native WebView loads the web UI from `http://localhost:8765`
+3. System tray and global shortcuts provide native OS integration
+4. On quit, Tauri cleans up the Python process
+
+See [`desktop/README.md`](desktop/README.md) for build options, bundling, troubleshooting, and platform-specific prerequisites.
 
 ## Usage
 
@@ -186,25 +272,51 @@ python live_scribe.py --list-devices
 ## Architecture
 
 ```
-┌─────────────┐    ┌──────────────────┐    ┌──────────────────┐
-│  Microphone  │───▶│  AudioTranscriber │───▶│ TranscriptionBuf │
-│  (sounddev)  │    │  (faster-whisper) │    │  (thread-safe)   │
-└─────────────┘    └────────┬─────────┘    └────────┬─────────┘
-                            │                        │
-                   ┌────────▼─────────┐ ┌────────────┘
-                   │ SpeakerDiarizer  │ │
-                   │ (pyannote, opt.) │ │
-                   └──────────────────┘ │
-                                        ▼
-                           ┌─────────────────┐    ┌─────────────┐
-                           │ ClaudeDispatcher │───▶│  claude -p   │
-                           │ (timer/manual)   │    │  (CLI call)  │
-                           └─────────────────┘    └─────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                  Desktop App (Tauri, optional)                   │
+│  System Tray · Global Shortcuts · Auto-start Backend            │
+└────────────────────────────┬────────────────────────────────────┘
+                             │ loads
+┌────────────────────────────▼────────────────────────────────────┐
+│                    Web UI  (localhost:8765)                      │
+│  Settings Panel · Transcript View · LLM Response Streaming      │
+└────────────────────────────┬────────────────────────────────────┘
+                   HTTP / WebSocket │
+┌──────────────────────────────────▼──────────────────────────────┐
+│                    web_server.py  (FastAPI)                      │
+│  REST API · WebSocket · Export · Preset Management              │
+└────────────────────────────┬────────────────────────────────────┘
+                             │ uses
+┌────────────────────────────▼────────────────────────────────────┐
+│                  live_scribe.py  (core engine)                   │
+│                                                                  │
+│  ┌─────────────┐  ┌──────────────────┐  ┌──────────────────┐   │
+│  │  Microphone  │─▶│  AudioTranscriber │─▶│ TranscriptionBuf │   │
+│  │  (sounddev)  │  │  (faster-whisper) │  │  (thread-safe)   │   │
+│  └─────────────┘  └────────┬─────────┘  └────────┬─────────┘   │
+│                    ┌───────▼────────┐             │              │
+│                    │ SpeakerDiarizer│             │              │
+│                    │(pyannote, opt.)│             │              │
+│                    └────────────────┘             ▼              │
+│                              ┌─────────────────────┐            │
+│                              │    LLMDispatcher     │            │
+│                              │  (timer / manual)    │            │
+│                              └──────────┬──────────┘            │
+└─────────────────────────────────────────┼───────────────────────┘
+                                          ▼
+                              ┌──────────────────────┐
+                              │    LLM Provider       │
+                              │  Claude CLI · OpenAI  │
+                              │  Anthropic · Gemini   │
+                              │  Ollama · LiteLLM     │
+                              └──────────────────────┘
 ```
 
 - **Audio thread**: `sounddevice` callback captures raw PCM into a buffer
 - **Transcription thread**: Every `--chunk` seconds, drains the audio buffer, runs Whisper with VAD filtering, and optionally runs pyannote diarization to label speakers
-- **Dispatch**: Timer thread (auto mode) or main thread on Enter (manual mode) sends accumulated text to `claude -p`
+- **Dispatch**: Timer thread (auto mode) or main thread on Enter (manual mode) sends accumulated text to the configured LLM provider
+- **Web server**: FastAPI app exposes REST/WebSocket endpoints and serves the browser UI
+- **Desktop shell**: Tauri wraps the web UI in a native window with system tray and keyboard shortcuts
 - All shared state is protected by threading locks
 
 ## Model Sizing Guide

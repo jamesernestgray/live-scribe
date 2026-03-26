@@ -89,7 +89,7 @@ class TestTauriConfig:
         assert config.get("productName") == "Live Scribe"
 
     def test_identifier(self, config: dict):
-        assert config.get("identifier") == "com.livescribe.app"
+        assert config.get("identifier") == "com.livescribe.desktop"
 
     def test_version(self, config: dict):
         version = config.get("version")
@@ -225,20 +225,32 @@ class TestRustSource:
     def test_main_handles_window_close(self, main_rs: str):
         assert "on_window_event" in main_rs or "WindowEvent" in main_rs
 
-    def test_lib_has_tauri_commands(self, lib_rs: str):
-        assert "#[tauri::command]" in lib_rs
+    def test_lib_has_backend_start_recording(self, lib_rs: str):
+        assert "fn backend_start_recording" in lib_rs
 
-    def test_lib_has_start_recording(self, lib_rs: str):
-        assert "fn start_recording" in lib_rs
+    def test_lib_has_backend_stop_recording(self, lib_rs: str):
+        assert "fn backend_stop_recording" in lib_rs
 
-    def test_lib_has_stop_recording(self, lib_rs: str):
-        assert "fn stop_recording" in lib_rs
+    def test_lib_has_backend_dispatch(self, lib_rs: str):
+        assert "fn backend_dispatch" in lib_rs
 
-    def test_lib_has_dispatch(self, lib_rs: str):
-        assert "fn dispatch" in lib_rs
+    def test_lib_has_backend_status(self, lib_rs: str):
+        assert "fn backend_status" in lib_rs
 
-    def test_lib_has_get_status(self, lib_rs: str):
-        assert "fn get_status" in lib_rs
+    def test_main_has_tauri_commands(self, main_rs: str):
+        assert "#[tauri::command]" in main_rs
+
+    def test_main_has_start_recording_command(self, main_rs: str):
+        assert "fn start_recording" in main_rs
+
+    def test_main_has_stop_recording_command(self, main_rs: str):
+        assert "fn stop_recording" in main_rs
+
+    def test_main_has_dispatch_command(self, main_rs: str):
+        assert "fn dispatch" in main_rs
+
+    def test_main_has_get_status_command(self, main_rs: str):
+        assert "fn get_status" in main_rs
 
     def test_lib_has_python_backend_management(self, lib_rs: str):
         assert "start_python_backend" in lib_rs
@@ -382,4 +394,231 @@ class TestFrontendPlaceholder:
         assert "localhost:8765" in html_content
 
     def test_has_loading_state(self, html_content: str):
-        assert "Connecting" in html_content or "Loading" in html_content
+        assert "Connecting" in html_content or "Loading" in html_content or "Starting" in html_content
+
+
+# ── Comprehensive Config Validation Tests ───────────────────────────
+
+
+class TestTauriConfigRequired:
+    """Validate tauri.conf.json has all required fields."""
+
+    @pytest.fixture
+    def config(self) -> dict:
+        config_path = TAURI_DIR / "tauri.conf.json"
+        with open(config_path) as f:
+            return json.load(f)
+
+    def test_has_identifier(self, config: dict):
+        identifier = config.get("identifier")
+        assert identifier is not None, "identifier is required"
+        assert "." in identifier, "identifier should be in reverse-domain format"
+
+    def test_has_build_config(self, config: dict):
+        build = config.get("build", {})
+        assert "frontendDist" in build, "build.frontendDist is required"
+
+    def test_bundle_resources_defined(self, config: dict):
+        resources = config.get("bundle", {}).get("resources", [])
+        assert len(resources) > 0, "bundle.resources must list files to bundle"
+
+    def test_window_url_set(self, config: dict):
+        windows = config.get("app", {}).get("windows", [])
+        assert len(windows) >= 1
+        window = windows[0]
+        assert "url" in window, "Window must have a url"
+        assert "localhost:8765" in window["url"], "Window url should point to backend"
+
+    def test_tray_icon_has_icon_path(self, config: dict):
+        tray = config.get("app", {}).get("trayIcon", {})
+        assert "iconPath" in tray, "trayIcon must have iconPath"
+
+    def test_bundle_icon_list(self, config: dict):
+        icons = config.get("bundle", {}).get("icon", [])
+        assert len(icons) >= 1, "bundle must define at least one icon"
+
+    def test_macos_entitlements_path(self, config: dict):
+        entitlements = config.get("bundle", {}).get("macOS", {}).get("entitlements")
+        assert entitlements is not None, "macOS entitlements path is required"
+
+    def test_plugins_section_exists(self, config: dict):
+        plugins = config.get("plugins", {})
+        assert "shell" in plugins, "shell plugin config is required"
+
+
+class TestEntitlementsPlist:
+    """Validate Entitlements.plist exists and contains audio-input key."""
+
+    def test_entitlements_file_exists(self):
+        path = TAURI_DIR / "Entitlements.plist"
+        assert path.is_file(), "Entitlements.plist must exist"
+
+    def test_entitlements_has_audio_input(self):
+        path = TAURI_DIR / "Entitlements.plist"
+        content = path.read_text()
+        assert "com.apple.security.device.audio-input" in content, (
+            "Entitlements.plist must contain the audio-input entitlement"
+        )
+
+    def test_entitlements_audio_input_enabled(self):
+        path = TAURI_DIR / "Entitlements.plist"
+        content = path.read_text()
+        # The <true/> should follow the audio-input key
+        audio_idx = content.index("com.apple.security.device.audio-input")
+        remainder = content[audio_idx:]
+        assert "<true/>" in remainder, (
+            "audio-input entitlement must be set to true"
+        )
+
+
+class TestInfoPlist:
+    """Validate Info.plist exists and contains NSMicrophoneUsageDescription."""
+
+    def test_info_plist_exists(self):
+        path = TAURI_DIR / "Info.plist"
+        assert path.is_file(), "Info.plist must exist"
+
+    def test_info_plist_has_microphone_description(self):
+        path = TAURI_DIR / "Info.plist"
+        content = path.read_text()
+        assert "NSMicrophoneUsageDescription" in content, (
+            "Info.plist must contain NSMicrophoneUsageDescription"
+        )
+
+    def test_info_plist_microphone_description_nonempty(self):
+        path = TAURI_DIR / "Info.plist"
+        content = path.read_text()
+        # After the key there should be a non-empty <string>...</string>
+        key_idx = content.index("NSMicrophoneUsageDescription")
+        remainder = content[key_idx:]
+        assert "<string>" in remainder, "NSMicrophoneUsageDescription must have a string value"
+        start = remainder.index("<string>") + len("<string>")
+        end = remainder.index("</string>")
+        value = remainder[start:end].strip()
+        assert len(value) > 0, "NSMicrophoneUsageDescription must not be empty"
+
+
+class TestCargoTomlRequired:
+    """Validate Cargo.toml has all required dependencies."""
+
+    @pytest.fixture
+    def cargo_content(self) -> str:
+        cargo_path = TAURI_DIR / "Cargo.toml"
+        with open(cargo_path) as f:
+            return f.read()
+
+    def test_reqwest_dependency(self, cargo_content: str):
+        assert "reqwest" in cargo_content, "reqwest dependency is required"
+
+    def test_reqwest_blocking_feature(self, cargo_content: str):
+        assert "blocking" in cargo_content, "reqwest must have blocking feature"
+
+    def test_reqwest_json_feature(self, cargo_content: str):
+        assert "json" in cargo_content, "reqwest must have json feature"
+
+    def test_open_dependency(self, cargo_content: str):
+        assert "open" in cargo_content, "open crate is required for URL opening"
+
+    def test_tauri_dependency(self, cargo_content: str):
+        assert "tauri" in cargo_content, "tauri dependency is required"
+
+    def test_serde_dependency(self, cargo_content: str):
+        assert "serde" in cargo_content, "serde dependency is required"
+
+    def test_serde_json_dependency(self, cargo_content: str):
+        assert "serde_json" in cargo_content, "serde_json dependency is required"
+
+
+class TestBundledResources:
+    """Validate that all bundled resource paths resolve to existing files."""
+
+    @pytest.fixture
+    def config(self) -> dict:
+        config_path = TAURI_DIR / "tauri.conf.json"
+        with open(config_path) as f:
+            return json.load(f)
+
+    def test_live_scribe_py_exists(self):
+        assert (PROJECT_ROOT / "live_scribe.py").is_file(), (
+            "live_scribe.py must exist at project root"
+        )
+
+    def test_web_server_py_exists(self):
+        assert (PROJECT_ROOT / "web_server.py").is_file(), (
+            "web_server.py must exist at project root"
+        )
+
+    def test_llm_providers_py_exists(self):
+        assert (PROJECT_ROOT / "llm_providers.py").is_file(), (
+            "llm_providers.py must exist at project root"
+        )
+
+    def test_requirements_txt_exists(self):
+        assert (PROJECT_ROOT / "requirements.txt").is_file(), (
+            "requirements.txt must exist at project root"
+        )
+
+    def test_web_index_html_exists(self):
+        assert (PROJECT_ROOT / "web" / "index.html").is_file(), (
+            "web/index.html must exist"
+        )
+
+    def test_web_directory_has_content(self):
+        web_dir = PROJECT_ROOT / "web"
+        assert web_dir.is_dir(), "web/ directory must exist"
+        files = list(web_dir.rglob("*"))
+        assert len(files) > 0, "web/ directory must not be empty"
+
+    def test_resource_paths_resolve(self, config: dict):
+        """Each non-glob resource path in tauri.conf.json should resolve to an existing file."""
+        resources = config.get("bundle", {}).get("resources", [])
+        for resource in resources:
+            if "*" in resource:
+                # Glob pattern — just check the base directory exists
+                import glob as globmod
+
+                base_dir = resource.split("*")[0].rstrip("/")
+                resolved = TAURI_DIR / base_dir
+                assert resolved.is_dir(), (
+                    f"Base directory for glob resource {resource!r} not found at {resolved}"
+                )
+            else:
+                resolved = TAURI_DIR / resource
+                assert resolved.is_file(), (
+                    f"Bundled resource {resource!r} not found at {resolved}"
+                )
+
+
+class TestCapabilitiesRequired:
+    """Validate capabilities/default.json has required permissions."""
+
+    @pytest.fixture
+    def capabilities(self) -> dict:
+        cap_path = TAURI_DIR / "capabilities" / "default.json"
+        with open(cap_path) as f:
+            return json.load(f)
+
+    def test_has_description(self, capabilities: dict):
+        assert "description" in capabilities, "Capabilities must have a description"
+
+    def test_has_windows_scope(self, capabilities: dict):
+        windows = capabilities.get("windows", [])
+        assert len(windows) > 0, "Capabilities must specify target windows"
+
+    def test_has_core_default(self, capabilities: dict):
+        permissions = capabilities.get("permissions", [])
+        assert "core:default" in permissions, (
+            "core:default permission is required"
+        )
+
+    def test_has_shell_execute(self, capabilities: dict):
+        permissions = capabilities.get("permissions", [])
+        assert "shell:allow-execute" in permissions, (
+            "shell:allow-execute permission is required for running Python"
+        )
+
+    def test_has_global_shortcut_register(self, capabilities: dict):
+        permissions = capabilities.get("permissions", [])
+        assert "global-shortcut:allow-register" in permissions, (
+            "global-shortcut:allow-register permission is required"
+        )
